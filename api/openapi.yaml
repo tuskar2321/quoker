@@ -1,0 +1,664 @@
+openapi: 3.1.0
+info:
+  title: Quoker Core API
+  version: 1.0.0
+  description: Public API of the Quoker core for the Android app. See docs/03-public-api.md.
+servers:
+  - url: https://api.example.ru
+security:
+  - session: []
+tags:
+  - name: auth
+  - name: videos
+  - name: targets
+  - name: sends
+  - name: history
+  - name: app
+  - name: admin
+
+paths:
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invite_code, device_id, device_name]
+              properties:
+                invite_code: { type: string, pattern: '^[A-Z0-9]{4}-[A-Z0-9]{4}$' }
+                device_id: { type: string, format: uuid }
+                device_name: { type: string, maxLength: 64 }
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_token, user]
+                properties:
+                  session_token: { type: string }
+                  user: { $ref: '#/components/schemas/Me' }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      responses:
+        '204': { description: Session revoked }
+
+  /v1/me:
+    get:
+      tags: [auth]
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /v1/auth/telegram/link:
+    post:
+      tags: [auth]
+      responses:
+        '200':
+          description: Deep link for binding
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deep_link, expires_at]
+                properties:
+                  deep_link: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+
+  /v1/auth/telegram/status:
+    get:
+      tags: [auth]
+      responses:
+        '200':
+          description: Binding status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [pending, linked, expired] }
+                  username: { type: [string, 'null'] }
+
+  /v1/auth/telegram:
+    delete:
+      tags: [auth]
+      responses:
+        '204': { description: Unlinked }
+
+  /v1/videos/resolve:
+    post:
+      tags: [videos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, maxLength: 2048 }
+      responses:
+        '200':
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  video: { $ref: '#/components/schemas/Video' }
+        '202': { $ref: '#/components/responses/TaskAccepted' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+
+  /v1/tasks/{task_id}:
+    get:
+      tags: [videos]
+      parameters:
+        - { name: task_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Task state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /v1/videos/{video_id}:
+    get:
+      tags: [videos]
+      parameters: [ { $ref: '#/components/parameters/VideoId' } ]
+      responses:
+        '200':
+          description: Video
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  video: { $ref: '#/components/schemas/Video' }
+
+  /v1/videos/{video_id}/thumbnail:
+    get:
+      tags: [videos]
+      parameters: [ { $ref: '#/components/parameters/VideoId' } ]
+      responses:
+        '200':
+          description: Thumbnail
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+
+  /v1/videos/{video_id}/prepare:
+    post:
+      tags: [videos]
+      parameters: [ { $ref: '#/components/parameters/VideoId' } ]
+      responses:
+        '200':
+          description: File ready in core cache
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file: { $ref: '#/components/schemas/FileState' }
+        '202': { $ref: '#/components/responses/TaskAccepted' }
+
+  /v1/videos/{video_id}/file:
+    get:
+      tags: [videos]
+      parameters:
+        - { $ref: '#/components/parameters/VideoId' }
+        - { name: Range, in: header, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Full file
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        '206':
+          description: Partial content
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /v1/videos/{video_id}/downloaded:
+    post:
+      tags: [videos]
+      parameters: [ { $ref: '#/components/parameters/VideoId' } ]
+      responses:
+        '204': { description: Recorded }
+
+  /v1/targets:
+    get:
+      tags: [targets]
+      parameters:
+        - { name: include_hidden, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Targets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Target' }
+
+  /v1/targets/{target_id}:
+    patch:
+      tags: [targets]
+      parameters:
+        - { name: target_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hidden]
+              properties:
+                hidden: { type: boolean }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  target: { $ref: '#/components/schemas/Target' }
+
+  /v1/targets/refresh:
+    post:
+      tags: [targets]
+      responses:
+        '202': { description: Re-verification queued }
+
+  /v1/sends:
+    post:
+      tags: [sends]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [video_id, target_id]
+              properties:
+                video_id: { type: string }
+                target_id: { type: integer }
+                caption: { type: [string, 'null'], maxLength: 1024 }
+                sign_as_user: { type: boolean, default: true }
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  send: { $ref: '#/components/schemas/Send' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+
+  /v1/sends/{send_id}:
+    get:
+      tags: [sends]
+      parameters:
+        - { name: send_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Send
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  send: { $ref: '#/components/schemas/Send' }
+
+  /v1/history:
+    get:
+      tags: [history]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: History page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/HistoryItem' }
+                  next_cursor: { type: [string, 'null'] }
+
+  /v1/app/version:
+    get:
+      tags: [app]
+      security: []
+      responses:
+        '200':
+          description: Latest app version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version_code: { type: integer }
+                  version_name: { type: string }
+                  apk_url: { type: string, format: uri }
+                  sha256: { type: string }
+                  min_supported_version_code: { type: integer }
+                  changelog: { type: string }
+
+  /v1/admin/status:
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminStatus' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /v1/admin/invites:
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: Invites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invite' }
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [user, admin], default: user }
+                expires_in_days: { type: integer, minimum: 1, maximum: 30, default: 7 }
+      responses:
+        '201':
+          description: Created; code is shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  expires_at: { type: string, format: date-time }
+
+  /v1/admin/invites/{invite_id}:
+    delete:
+      tags: [admin]
+      parameters:
+        - { name: invite_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: Revoked }
+
+  /v1/admin/users:
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminUser' }
+
+  /v1/admin/users/{user_id}/block:
+    post:
+      tags: [admin]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: Blocked }
+
+  /v1/admin/users/{user_id}/unblock:
+    post:
+      tags: [admin]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: Unblocked }
+
+  /v1/admin/instagram-cookies:
+    put:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        '204': { description: Stored }
+
+  /v1/admin/workers:
+    get:
+      tags: [admin]
+      responses:
+        '200':
+          description: Workers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Worker' }
+    post:
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, fingerprint]
+              properties:
+                id: { type: string }
+                fingerprint: { type: string, description: SHA-256 of the client certificate, hex }
+      responses:
+        '201': { description: Allowed }
+
+  /v1/admin/workers/{worker_id}:
+    delete:
+      tags: [admin]
+      parameters:
+        - { name: worker_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Revoked }
+
+components:
+  securitySchemes:
+    session:
+      type: http
+      scheme: bearer
+
+  parameters:
+    VideoId:
+      name: video_id
+      in: path
+      required: true
+      schema: { type: string, examples: ['tiktok:7301234567890123456'] }
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TaskAccepted:
+      description: Accepted, poll the task
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [task_id]
+            properties:
+              task_id: { type: string }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum: [unauthorized, forbidden, user_blocked, upgrade_required, invalid_invite, telegram_not_linked, link_token_expired, unsupported_url, unsupported_content, private_video, not_found, file_not_ready, too_large, target_inactive, target_forbidden, rate_limited, worker_unavailable, upstream_error, internal]
+            message: { type: string }
+            retryable: { type: boolean }
+
+    Me:
+      type: object
+      required: [id, role, telegram]
+      properties:
+        id: { type: integer }
+        role: { type: string, enum: [user, admin] }
+        telegram:
+          type: object
+          properties:
+            linked: { type: boolean }
+            username: { type: [string, 'null'] }
+            first_name: { type: [string, 'null'] }
+
+    FileState:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [none, preparing, ready, failed] }
+        size_bytes: { type: [integer, 'null'] }
+
+    Video:
+      type: object
+      required: [id, platform, source_url, canonical_url, file]
+      properties:
+        id: { type: string }
+        platform: { type: string, enum: [tiktok, instagram] }
+        source_url: { type: string }
+        canonical_url: { type: string }
+        author: { type: [string, 'null'] }
+        caption: { type: [string, 'null'] }
+        duration_s: { type: [integer, 'null'] }
+        size_bytes: { type: [integer, 'null'] }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        no_watermark: { type: [boolean, 'null'] }
+        thumbnail_url: { type: [string, 'null'] }
+        file: { $ref: '#/components/schemas/FileState' }
+
+    Task:
+      type: object
+      required: [id, kind, status]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [resolve, download] }
+        status: { type: string, enum: [queued, running, done, failed] }
+        progress: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+        video: { oneOf: [ { $ref: '#/components/schemas/Video' }, { type: 'null' } ] }
+        error: { oneOf: [ { $ref: '#/components/schemas/Error/properties/error' }, { type: 'null' } ] }
+
+    Target:
+      type: object
+      required: [id, title, type, status, hidden]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        type: { type: string, enum: [group, channel, private] }
+        status: { type: string, enum: [active, inactive] }
+        inactive_reason: { type: [string, 'null'], enum: [bot_removed, bot_not_admin, user_left, user_not_admin, null] }
+        hidden: { type: boolean }
+        last_used_at: { type: [string, 'null'], format: date-time }
+
+    Send:
+      type: object
+      required: [id, video_id, target_id, status, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        video_id: { type: string }
+        target_id: { type: integer }
+        status: { type: string, enum: [queued, sending, sent, failed] }
+        error: { oneOf: [ { $ref: '#/components/schemas/Error/properties/error' }, { type: 'null' } ] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    HistoryItem:
+      type: object
+      required: [id, video, actions]
+      properties:
+        id: { type: integer }
+        video: { $ref: '#/components/schemas/Video' }
+        actions:
+          type: array
+          items:
+            type: object
+            required: [type, at]
+            properties:
+              type: { type: string, enum: [resolved, downloaded, sent, send_failed] }
+              target_title: { type: [string, 'null'] }
+              send_id: { type: [integer, 'null'] }
+              at: { type: string, format: date-time }
+
+    Invite:
+      type: object
+      properties:
+        id: { type: integer }
+        role: { type: string, enum: [user, admin] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        used_by: { type: [integer, 'null'] }
+        used_at: { type: [string, 'null'], format: date-time }
+
+    AdminUser:
+      type: object
+      properties:
+        id: { type: integer }
+        role: { type: string, enum: [user, admin] }
+        status: { type: string, enum: [active, blocked] }
+        telegram_username: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: [string, 'null'], format: date-time }
+
+    Worker:
+      type: object
+      properties:
+        id: { type: string }
+        fingerprint: { type: string }
+        status: { type: string, enum: [allowed, revoked] }
+        connected: { type: boolean }
+        version: { type: [string, 'null'] }
+        ytdlp_version: { type: [string, 'null'] }
+        last_seen_at: { type: [string, 'null'], format: date-time }
+        is_poller: { type: boolean }
+
+    AdminStatus:
+      type: object
+      properties:
+        workers:
+          type: array
+          items: { $ref: '#/components/schemas/Worker' }
+        queue:
+          type: object
+          properties:
+            queued: { type: integer }
+            running: { type: integer }
+        errors_24h:
+          type: object
+          properties:
+            tiktok: { type: integer }
+            instagram: { type: integer }
+            telegram: { type: integer }
+        disk:
+          type: object
+          properties:
+            used_bytes: { type: integer }
+            total_bytes: { type: integer }
+            cache_bytes: { type: integer }
+        versions:
+          type: object
+          properties:
+            core: { type: string }
+            app_latest: { type: string }

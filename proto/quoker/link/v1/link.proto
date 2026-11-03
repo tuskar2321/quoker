@@ -1,0 +1,174 @@
+syntax = "proto3";
+
+package quoker.link.v1;
+
+option go_package = "github.com/tuskar2321/quoker/gen/quoker/link/v1;linkv1";
+
+// LinkService is served by the core on w.<domain>:443 behind mTLS.
+// The worker always opens the stream; the core never dials out.
+service LinkService {
+  rpc Connect(stream WorkerMessage) returns (stream CoreMessage);
+}
+
+// ---------- worker -> core ----------
+
+message WorkerMessage {
+  oneof msg {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    TaskResult task_result = 3;
+    TaskProgress task_progress = 4;
+    BotUpdate bot_update = 5;
+  }
+}
+
+message Hello {
+  string worker_id = 1;        // must equal the client certificate CN
+  string version = 2;          // worker build version
+  string ytdlp_version = 3;
+  int32 max_parallel = 4;      // worker-side cap; core uses min(config, this)
+}
+
+message Heartbeat {
+  int64 unix_ms = 1;
+  int32 running_tasks = 2;
+  int64 tmp_cache_bytes = 3;
+}
+
+message TaskProgress {
+  string task_id = 1;
+  int32 percent = 2;           // 0..100
+}
+
+message TaskResult {
+  string task_id = 1;
+  oneof result {
+    ResolveResult resolve = 2;
+    DownloadResult download = 3;
+    SendVideoResult send_video = 4;
+    BotCallResult bot_call = 5;
+    TaskError error = 15;
+  }
+}
+
+message TaskError {
+  // Same codes as the public API where applicable:
+  // unsupported_content, private_video, too_large, upstream_error,
+  // target_forbidden, target_inactive, login_required, rate_limited, internal
+  string code = 1;
+  string message = 2;          // diagnostic, English, may be logged
+  bool retryable = 3;
+  // Raw Telegram error when the failure came from Bot API.
+  int32 telegram_error_code = 4;
+  string telegram_description = 5;
+}
+
+message ResolveResult {
+  string platform = 1;         // tiktok | instagram
+  string native_id = 2;
+  string canonical_url = 3;
+  string author = 4;
+  string caption = 5;
+  int32 duration_s = 6;
+  int64 size_bytes = 7;        // best format, 0 if unknown
+  int32 width = 8;
+  int32 height = 9;
+  bool no_watermark = 10;
+  bool thumbnail_uploaded = 11;
+  bool used_cookies = 12;
+}
+
+message DownloadResult {
+  int64 size_bytes = 1;
+  string sha256 = 2;
+  string format_id = 3;
+}
+
+message SendVideoResult {
+  int64 message_id = 1;
+  int64 sent_bytes = 2;
+  string format_id = 3;
+}
+
+message BotCallResult {
+  string response_json = 1;    // the "result" field of the Bot API response
+}
+
+message BotUpdate {
+  int64 update_id = 1;
+  string update_json = 2;      // the full Telegram Update object as received
+}
+
+// ---------- core -> worker ----------
+
+message CoreMessage {
+  oneof msg {
+    Config config = 1;
+    Task task = 2;
+    CancelTask cancel_task = 3;
+    Heartbeat heartbeat = 4;
+    BotUpdateAck bot_update_ack = 5;
+    Shutdown shutdown = 6;
+  }
+}
+
+message Config {
+  string bot_token = 1;
+  string instagram_cookies = 2;   // Netscape cookies.txt content, may be empty
+  bool poll_updates = 3;          // only one worker polls getUpdates
+  int32 max_parallel = 4;
+  int64 max_send_bytes = 5;       // 50 MiB for the cloud Bot API
+  int64 max_download_bytes = 6;   // hard cap for phone downloads
+  string bot_api_base = 7;        // default https://api.telegram.org; overridable for tests
+  string upload_base = 8;         // https://w.<domain>/internal/v1
+}
+
+message Task {
+  string task_id = 1;
+  int64 lease_ms = 2;             // the worker must finish or report progress within the lease
+  oneof kind {
+    ResolveTask resolve = 10;
+    DownloadTask download = 11;
+    SendVideoTask send_video = 12;
+    BotCallTask bot_call = 13;
+  }
+}
+
+message ResolveTask {
+  string url = 1;                 // canonical URL for yt-dlp (docs/07-downloading.md)
+  string video_id = 2;            // "<platform>:<native_id>" if known before resolving, else empty
+}
+
+message DownloadTask {
+  string video_id = 1;
+  string url = 2;
+  int64 max_bytes = 3;
+}
+
+message SendVideoTask {
+  string video_id = 1;
+  string url = 2;
+  int64 chat_id = 3;
+  string caption_html = 4;        // already composed and escaped by the core
+  int64 max_bytes = 5;
+  int32 duration_s = 6;
+  int32 width = 7;
+  int32 height = 8;
+}
+
+message BotCallTask {
+  string method = 1;              // e.g. sendMessage, getChatMember, getChat
+  string params_json = 2;
+}
+
+message CancelTask {
+  string task_id = 1;
+}
+
+message BotUpdateAck {
+  int64 update_id = 1;            // the worker may advance the getUpdates offset past this id
+}
+
+message Shutdown {
+  string reason = 1;              // e.g. revoked, replaced_by_newer_version
+}

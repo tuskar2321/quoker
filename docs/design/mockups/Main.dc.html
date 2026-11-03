@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Главный экран</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#6AB3F5}a:hover{color:#9CCBF8}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #000000; color: #F3F3F5; font-family: Manrope, system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden">
+  <header style="display: flex; align-items: center; justify-content: space-between; padding: 20px 12px 8px 20px">
+    <div style="display: flex; align-items: center; gap: 10px"><svg width="32" height="32" viewBox="0 0 120 120" aria-hidden="true"><circle cx="38" cy="40" r="17" fill="#C5F06B"></circle><circle cx="82" cy="40" r="17" fill="#C5F06B"></circle><path d="M12 72C12 50 32 40 60 40C88 40 108 50 108 72C108 94 88 102 60 102C32 102 12 94 12 72Z" fill="#C5F06B"></path><circle cx="38" cy="40" r="8" fill="#000000"></circle><circle cx="82" cy="40" r="8" fill="#000000"></circle><circle cx="41" cy="37" r="2.5" fill="#F3F3F5"></circle><circle cx="85" cy="37" r="2.5" fill="#F3F3F5"></circle><path d="M38 76Q60 90 82 76" fill="none" stroke="#000000" stroke-width="5" stroke-linecap="round"></path></svg><h1 style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.4px">quoker</h1></div>
+    <button aria-label="Настройки" style="width: 48px; height: 48px; border: 0; border-radius: 24px; background: transparent; color: #F3F3F5; display: flex; align-items: center; justify-content: center">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
+    </button>
+  </header>
+
+  <section style="padding: 12px 20px 0; display: flex; flex-direction: column; gap: 12px">
+    <label for="link" style="font-size: 13px; font-weight: 600; color: #A9ABB3">Ссылка на TikTok или Reels</label>
+    <div style="display: flex; align-items: center; gap: 8px; height: 56px; box-sizing: border-box; padding: 0 8px 0 16px; background: #141414; border: 1px solid #2E2E2E; border-radius: 16px">
+      <input id="link" type="url" placeholder="https://" style="flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: #F3F3F5; font: 500 16px Manrope, system-ui, sans-serif; outline: none">
+      <button aria-label="Вставить" style="width: 44px; height: 44px; border: 0; border-radius: 12px; background: #1F1F1F; color: #F3F3F5; display: flex; align-items: center; justify-content: center">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"></rect><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"></path></svg>
+      </button>
+    </div>
+    <button style="display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 14px; border: 1px dashed #4D4D4D; border-radius: 14px; background: transparent; color: #F3F3F5; font: 600 14px Manrope, system-ui, sans-serif; text-align: left">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C5F06B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path></svg>
+      <span style="display: flex; flex-direction: column; gap: 2px">
+        <span>Вставить ссылку из буфера</span>
+        <span style="font-weight: 500; font-size: 12px; color: #A9ABB3">vm.tiktok.com/ZM…</span>
+      </span>
+    </button>
+    <button style="height: 52px; border: 0; border-radius: 16px; background: #F3F3F5; color: #000000; font: 700 16px Manrope, system-ui, sans-serif">Открыть видео</button>
+  </section>
+
+  <section style="padding: 28px 20px 0; display: flex; flex-direction: column; gap: 4px; flex: 1; min-height: 0">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 700">Недавние</h2>
+      <a href="History.dc.html" style="font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 0">Вся история</a>
+    </div>
+
+    <div style="display: flex; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid #1F1F1F">
+      <div style="width: 48px; height: 64px; border-radius: 10px; background: #2A2A2A; flex: none"></div>
+      <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1">
+        <div style="font-size: 15px; font-weight: 600">@author · TikTok</div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <span style="font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 8px; background: #1F2614; color: #D6F59A">Скачано</span>
+          <span style="font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 8px; background: #17242F; color: #9CCBF8">→ Друзья</span>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #A9ABB3">12:40</div>
+    </div>
+
+    <div style="display: flex; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid #1F1F1F">
+      <div style="width: 48px; height: 64px; border-radius: 10px; background: #2A2A2A; flex: none"></div>
+      <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1">
+        <div style="font-size: 15px; font-weight: 600">@author · Reels</div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <span style="font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 8px; background: #17242F; color: #9CCBF8">→ Мой канал</span>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #A9ABB3">Вчера</div>
+    </div>
+
+    <div style="display: flex; gap: 14px; align-items: center; padding: 10px 0">
+      <div style="width: 48px; height: 64px; border-radius: 10px; background: #2A2A2A; flex: none"></div>
+      <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1">
+        <div style="font-size: 15px; font-weight: 600">@author · TikTok</div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <span style="font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 8px; background: #1F2614; color: #D6F59A">Скачано</span>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #A9ABB3">Вчера</div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+# secrets
+.env
+.env.local
+.env.prod
+*.key
+*.pem
+deploy/secrets/
+deploy/*/certs/
+deploy/*/xray/config.json
+# go
+/bin/
+/dist/
+*.test
+coverage.out
+go.work
+go.work.sum
+# local data
+/data/
+/cache/
+deploy/*/data/
+deploy/*/cache/
+deploy/*/releases/
+deploy/*/backups/
+*.db
+*.db-wal
+*.db-shm
+# android
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/captures/
+android/local.properties
+android/*.jks
+android/*.keystore
+*.apk
+*.aab
+# editors and tools
+.idea/
+*.iml
+.DS_Store
+.claude/settings.local.json

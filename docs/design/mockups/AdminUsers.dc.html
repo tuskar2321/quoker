@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Пользователи</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#6AB3F5}a:hover{color:#9CCBF8}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #000000; color: #F3F3F5; font-family: Manrope, system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden">
+  <header style="display: flex; align-items: center; gap: 4px; padding: 16px 12px 8px 4px">
+    <a href="AdminStatus.dc.html" aria-label="Назад" style="width: 48px; height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; color: #F3F3F5">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+    </a>
+    <h1 style="margin: 0; font-size: 20px; font-weight: 800">Пользователи</h1>
+  </header>
+
+  <section style="padding: 8px 20px 0; display: flex; flex-direction: column; gap: 10px">
+    <div style="font-size: 13px; color: #A9ABB3">5 человек · 4 активны · 1 заблокирован</div>
+
+    <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: #141414">
+      <span style="width: 40px; height: 40px; border-radius: 20px; background: #1F2614; color: #D6F59A; display: flex; align-items: center; justify-content: center; font-weight: 800; flex: none">M</span>
+      <span style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0"><span style="font-size: 15px; font-weight: 700">@username</span><span style="font-size: 12px; color: #A9ABB3">Админ · это вы</span></span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: #141414">
+      <span style="width: 40px; height: 40px; border-radius: 20px; background: #2A2A2A; display: flex; align-items: center; justify-content: center; font-weight: 800; flex: none">A</span>
+      <span style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0"><span style="font-size: 15px; font-weight: 700">@friend</span><span style="font-size: 12px; color: #A9ABB3">Сегодня, 12:40 · 3 цели</span></span>
+      <button style="height: 40px; padding: 0 12px; border: 1px solid #2E2E2E; border-radius: 12px; background: transparent; color: #FF9EA6; font: 600 13px Manrope, system-ui, sans-serif">Заблокировать</button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: #141414">
+      <span style="width: 40px; height: 40px; border-radius: 20px; background: #2A2A2A; display: flex; align-items: center; justify-content: center; font-weight: 800; flex: none">K</span>
+      <span style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0"><span style="font-size: 15px; font-weight: 700">@friend2</span><span style="font-size: 12px; color: #A9ABB3">Вчера · 1 цель</span></span>
+      <button style="height: 40px; padding: 0 12px; border: 1px solid #2E2E2E; border-radius: 12px; background: transparent; color: #FF9EA6; font: 600 13px Manrope, system-ui, sans-serif">Заблокировать</button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: #141414">
+      <span style="width: 40px; height: 40px; border-radius: 20px; background: #2A2A2A; display: flex; align-items: center; justify-content: center; font-weight: 800; flex: none">Д</span>
+      <span style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0"><span style="font-size: 15px; font-weight: 700">Дима</span><span style="font-size: 12px; color: #A9ABB3">Telegram не привязан</span></span>
+      <button style="height: 40px; padding: 0 12px; border: 1px solid #2E2E2E; border-radius: 12px; background: transparent; color: #FF9EA6; font: 600 13px Manrope, system-ui, sans-serif">Заблокировать</button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: #141414">
+      <span style="width: 40px; height: 40px; border-radius: 20px; background: #2E1A1C; color: #FF9EA6; display: flex; align-items: center; justify-content: center; font-weight: 800; flex: none">S</span>
+      <span style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0"><span style="font-size: 15px; font-weight: 700; color: #A9ABB3">@someone</span><span style="align-self: flex-start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 8px; background: #2E1A1C; color: #FF9EA6">Заблокирован</span></span>
+      <button style="height: 40px; padding: 0 12px; border: 0; border-radius: 12px; background: #F3F3F5; color: #000000; font: 700 13px Manrope, system-ui, sans-serif">Разблокировать</button>
+    </div>
+
+    <p style="margin: 6px 0 0; font-size: 13px; line-height: 1.45; color: #A9ABB3">Блокировка сразу завершает все сессии пользователя. Его цели и история сохраняются.</p>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Quoker — вход по приглашению</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#6AB3F5}a:hover{color:#9CCBF8}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #000000; color: #F3F3F5; font-family: Manrope, system-ui, sans-serif; display: flex; flex-direction: column; padding: 72px 24px 32px; gap: 20px">
+  <div style="width: 64px; height: 64px; border-radius: 20px; background: #141414; display: flex; align-items: center; justify-content: center"><svg width="48" height="48" viewBox="0 0 120 120" aria-hidden="true"><circle cx="38" cy="40" r="17" fill="#C5F06B"></circle><circle cx="82" cy="40" r="17" fill="#C5F06B"></circle><path d="M12 72C12 50 32 40 60 40C88 40 108 50 108 72C108 94 88 102 60 102C32 102 12 94 12 72Z" fill="#C5F06B"></path><circle cx="38" cy="40" r="8" fill="#000000"></circle><circle cx="82" cy="40" r="8" fill="#000000"></circle><circle cx="41" cy="37" r="2.5" fill="#F3F3F5"></circle><circle cx="85" cy="37" r="2.5" fill="#F3F3F5"></circle><path d="M38 76Q60 90 82 76" fill="none" stroke="#000000" stroke-width="5" stroke-linecap="round"></path></svg></div>
+  <h1 style="margin: 8px 0 0; font-size: 28px; line-height: 1.2; font-weight: 800">Вход по приглашению</h1>
+  <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #C6C8CE">Quoker — закрытое приложение. Введите код, который вам прислал администратор.</p>
+
+  <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px">
+    <label for="code" style="font-size: 13px; font-weight: 600; color: #A9ABB3">Код приглашения</label>
+    <input id="code" type="text" autocomplete="one-time-code" value="K7Q2-" style="height: 56px; box-sizing: border-box; padding: 0 16px; border-radius: 16px; border: 1.5px solid #C5F06B; background: #141414; color: #F3F3F5; font: 700 20px Manrope, system-ui, sans-serif; letter-spacing: 3px; outline: none">
+    <div style="font-size: 13px; color: #A9ABB3">Формат: XXXX-XXXX</div>
+  </div>
+
+  <div style="flex: 1"></div>
+  <a href="Telegram.dc.html" style="height: 56px; border-radius: 16px; background: #F3F3F5; color: #000000; font: 800 16px Manrope, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; text-decoration: none">Продолжить</a>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

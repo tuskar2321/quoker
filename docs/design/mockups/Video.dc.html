@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Sheet «Видео» — готово</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#6AB3F5}a:hover{color:#9CCBF8}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #000000; color: #F3F3F5; font-family: Manrope, system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden">
+  <div style="flex: 1; display: flex; align-items: center; justify-content: center; color: #6B6E77; font-size: 13px; font-weight: 600">Исходное приложение под затемнением</div>
+
+  <section aria-label="Видео" style="background: #141414; border-radius: 28px 28px 0 0; padding: 10px 20px 28px; display: flex; flex-direction: column; gap: 20px">
+    <div style="width: 36px; height: 4px; border-radius: 2px; background: #4D4D4D; align-self: center"></div>
+
+    <div style="display: flex; gap: 16px">
+      <div style="width: 112px; height: 198px; border-radius: 14px; background: #2A2A2A; flex: none; display: flex; align-items: center; justify-content: center; position: relative">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="#F3F3F5" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+        <span style="position: absolute; right: 8px; bottom: 8px; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: #000000">0:27</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0; flex: 1">
+        <span style="align-self: flex-start; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 8px; background: #1F1F1F; color: #F3F3F5">TikTok</span>
+        <div style="font-size: 17px; font-weight: 800">@author</div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #C6C8CE">[Описание видео, как его написал автор, — до трёх строк, дальше обрезается]</p>
+        <div style="font-size: 13px; color: #A9ABB3; margin-top: auto">14 МБ · без водяного знака</div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <button style="height: 56px; border: 0; border-radius: 16px; background: #C5F06B; color: #141414; font: 800 16px Manrope, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; gap: 10px">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"></path><path d="M7 10l5 5 5-5"></path><path d="M5 20h14"></path></svg>
+        Скачать
+      </button>
+      <a href="Send.dc.html" style="height: 56px; border-radius: 16px; background: #6AB3F5; color: #141414; font: 800 16px Manrope, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 3L10 14"></path><path d="M21 3l-7 18-4-7-7-4z"></path></svg>
+        Отправить в Telegram
+      </a>
+    </div>
+
+    <div style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #A9ABB3">
+      <span>vm.tiktok.com/ZM…</span>
+      <a href="https://www.tiktok.com" style="font-weight: 600; text-decoration: none; padding: 12px 0">Открыть оригинал</a>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

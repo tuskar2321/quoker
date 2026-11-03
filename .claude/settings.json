@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git push)",
+      "Bash(git branch -D:*)",
+      "Bash(git push origin --delete:*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.local)",
+      "Read(./**/.env.prod)",
+      "Read(./deploy/secrets/**)"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Онбординг: привязка Telegram</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#6AB3F5}a:hover{color:#9CCBF8}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #000000; color: #F3F3F5; font-family: Manrope, system-ui, sans-serif; display: flex; flex-direction: column; padding: 72px 24px 32px; gap: 20px">
+  <div style="width: 64px; height: 64px; border-radius: 20px; background: #6AB3F5; color: #141414; display: flex; align-items: center; justify-content: center">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 3L10 14"></path><path d="M21 3l-7 18-4-7-7-4z"></path></svg>
+  </div>
+  <h1 style="margin: 8px 0 0; font-size: 28px; line-height: 1.2; font-weight: 800">Привяжите Telegram</h1>
+  <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #C6C8CE">Через бота приложение отправляет видео в ваши чаты и каналы. Другие пользователи ваш список не увидят.</p>
+
+  <ol style="margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px">
+    <li style="display: flex; gap: 14px; align-items: flex-start">
+      <span style="width: 28px; height: 28px; border-radius: 14px; background: #17242F; color: #9CCBF8; font-size: 14px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex: none">1</span>
+      <span style="font-size: 15px; line-height: 1.45; padding-top: 3px">Нажмите кнопку ниже и в боте — «Start»</span>
+    </li>
+    <li style="display: flex; gap: 14px; align-items: flex-start">
+      <span style="width: 28px; height: 28px; border-radius: 14px; background: #17242F; color: #9CCBF8; font-size: 14px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex: none">2</span>
+      <span style="font-size: 15px; line-height: 1.45; padding-top: 3px">Добавьте бота в группу или администратором в канал с правом публикации — цель сама появится в списке</span>
+    </li>
+  </ol>
+
+  <div role="status" style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: #141414">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CCBF8" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span style="font-size: 14px; font-weight: 600; color: #CFE6FB">Ждём подтверждения в Telegram…</span>
+  </div>
+
+  <div style="flex: 1"></div>
+  <a href="https://t.me" style="height: 56px; border-radius: 16px; background: #6AB3F5; color: #141414; font: 800 16px Manrope, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none">Открыть бота в Telegram</a>
+  <div style="text-align: center; font-size: 13px; color: #A9ABB3">Ссылка действует 10 минут</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
