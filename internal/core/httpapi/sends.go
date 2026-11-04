@@ -92,6 +92,7 @@ func (s *server) createSend(w http.ResponseWriter, r *http.Request) {
 		SignAsUser:        req.SignAsUser,
 		IdempotencyKey:    key,
 		CallerID:          p.UserID,
+		TelegramUserID:    usr.TelegramUserID,
 		TelegramUsername:  usr.TelegramUsername,
 		TelegramFirstName: usr.TelegramFirstName,
 	})

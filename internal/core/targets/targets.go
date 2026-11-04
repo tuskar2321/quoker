@@ -5,6 +5,7 @@ package targets
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -35,23 +36,36 @@ const (
 
 // Target is a row from the targets table.
 type Target struct {
-	ID             int64
-	OwnerUserID    int64
-	ChatID         int64
-	Type           string // group | channel | private
-	Title          string
-	Status         Status
-	InactiveReason InactiveReason
-	Hidden         bool
-	LastUsedAt     time.Time // zero when never used
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              int64
+	OwnerUserID     int64
+	ChatID          int64
+	Type            string // group | channel | private
+	Title           string
+	Status          Status
+	InactiveReason  InactiveReason
+	Hidden          bool
+	RightsCheckedAt time.Time // zero when never checked
+	LastUsedAt      time.Time // zero when never used
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // Service provides target operations.
 type Service struct {
 	st  *store.Store
 	now func() time.Time
+	bot BotCaller // nil skips rights checks
+}
+
+// BotCaller runs a Bot API method on a worker and returns its result.
+type BotCaller interface {
+	Call(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
+// WithBot enables rights checks through b.
+func (s *Service) WithBot(b BotCaller) *Service {
+	s.bot = b
+	return s
 }
 
 // New returns a Service.
@@ -67,7 +81,7 @@ func New(st *store.Store, now func() time.Time) *Service {
 // title.
 func (s *Service) List(ctx context.Context, userID int64, includeHidden bool) ([]Target, error) {
 	q := `SELECT id, owner_user_id, chat_id, type, title, status, inactive_reason,
-		         hidden, last_used_at, created_at, updated_at
+		         hidden, rights_checked_at, last_used_at, created_at, updated_at
 		  FROM targets
 		  WHERE owner_user_id = ?`
 	if !includeHidden {
@@ -96,7 +110,7 @@ func (s *Service) List(ctx context.Context, userID int64, includeHidden bool) ([
 func (s *Service) Get(ctx context.Context, userID, targetID int64) (Target, error) {
 	row := s.st.DB().QueryRowContext(ctx, `
 		SELECT id, owner_user_id, chat_id, type, title, status, inactive_reason,
-		       hidden, last_used_at, created_at, updated_at
+		       hidden, rights_checked_at, last_used_at, created_at, updated_at
 		FROM targets WHERE id = ? AND owner_user_id = ?`, targetID, userID)
 	t, err := scanTarget(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -131,6 +145,7 @@ func scanTarget(s scanner) (Target, error) {
 		status         string
 		inactiveReason sql.NullString
 		hidden         int64
+		checkedMS      sql.NullInt64
 		lastUsedMS     sql.NullInt64
 		createdMS      int64
 		updatedMS      int64
@@ -138,7 +153,7 @@ func scanTarget(s scanner) (Target, error) {
 	err := s.Scan(
 		&t.ID, &t.OwnerUserID, &t.ChatID, &t.Type, &t.Title,
 		&status, &inactiveReason, &hidden,
-		&lastUsedMS, &createdMS, &updatedMS)
+		&checkedMS, &lastUsedMS, &createdMS, &updatedMS)
 	if err != nil {
 		return Target{}, fmt.Errorf("scan target: %w", err)
 	}
@@ -147,6 +162,9 @@ func scanTarget(s scanner) (Target, error) {
 	t.Hidden = hidden != 0
 	if lastUsedMS.Valid {
 		t.LastUsedAt = time.UnixMilli(lastUsedMS.Int64).UTC()
+	}
+	if checkedMS.Valid {
+		t.RightsCheckedAt = time.UnixMilli(checkedMS.Int64).UTC()
 	}
 	t.CreatedAt = time.UnixMilli(createdMS).UTC()
 	t.UpdatedAt = time.UnixMilli(updatedMS).UTC()
@@ -163,10 +181,11 @@ func (s *Service) Upsert(ctx context.Context, t Target) (Target, error) {
 		  (owner_user_id, chat_id, type, title, status, hidden, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, 0, ?, ?)
 		ON CONFLICT(owner_user_id, chat_id) DO UPDATE SET
-		  type       = excluded.type,
-		  title      = excluded.title,
-		  status     = excluded.status,
-		  updated_at = excluded.updated_at`,
+		  type            = excluded.type,
+		  title           = excluded.title,
+		  status          = excluded.status,
+		  inactive_reason = CASE WHEN excluded.status = 'active' THEN NULL ELSE inactive_reason END,
+		  updated_at      = excluded.updated_at`,
 		t.OwnerUserID, t.ChatID, t.Type, t.Title, string(t.Status),
 		now.UnixMilli(), now.UnixMilli())
 	if err != nil {

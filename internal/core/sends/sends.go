@@ -65,6 +65,7 @@ type CreateParams struct {
 	SignAsUser        bool
 	IdempotencyKey    string
 	CallerID          int64
+	TelegramUserID    int64 // for the rights check
 	TelegramUsername  string
 	TelegramFirstName string
 }
@@ -107,6 +108,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Send, error) {
 	}
 	if tgt.Status != targets.StatusActive {
 		return nil, errs.New(errs.TargetInactive, "target is inactive")
+	}
+	if err := s.targets.CheckRights(ctx, tgt, p.TelegramUserID); err != nil {
+		return nil, err
 	}
 
 	captionHTML := BuildCaption(p.Caption, vid, tgt, p.SignAsUser, p.TelegramUsername, p.TelegramFirstName)
@@ -217,6 +221,13 @@ func (s *Service) finish(ctx context.Context, taskID string, st Status, messageI
 			string(st), nullInt(messageID), nullStr(code), now, id); err != nil {
 			return fmt.Errorf("update send: %w", err)
 		}
+		if reason := lostChatReason(code); reason != "" {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE targets SET status = 'inactive', inactive_reason = ?, updated_at = ?
+				 WHERE chat_id = (SELECT chat_id FROM targets WHERE id = ?)`, reason, now, targetID); err != nil {
+				return fmt.Errorf("deactivate target: %w", err)
+			}
+		}
 		action := "send_failed"
 		if st == StatusSent {
 			action = "sent"
@@ -233,6 +244,18 @@ func (s *Service) finish(ctx context.Context, taskID string, st Status, messageI
 		}
 		return nil
 	})
+}
+
+// lostChatReason maps a Telegram send failure to why the bot can no longer
+// post to the chat; "" when the failure says nothing about the chat.
+func lostChatReason(code string) string {
+	switch errs.Code(code) {
+	case errs.TargetForbidden:
+		return string(targets.ReasonBotNotAdmin)
+	case errs.TargetInactive:
+		return string(targets.ReasonBotRemoved)
+	}
+	return ""
 }
 
 func scanSend(row *sql.Row) (*Send, error) {

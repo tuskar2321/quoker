@@ -33,6 +33,8 @@
 - Для группы: `getChatMember(chat_id, user.tg_user_id)` — статус `creator | administrator | member | restricted (с can_send_media)`.
 - Для канала: `creator | administrator` с `can_post_messages`.
 - Результат кэшируется в `targets.rights_checked_at` на 5 минут. Нет прав → цель `inactive: user_left | user_not_admin`, отправка `403 target_forbidden`.
+- Бот больше не видит чат (`chat not found`, бот исключён) → все цели чата `inactive: bot_removed`, отправка `409 target_inactive`.
+- Воркер не ответил на `getChatMember` за время запроса → отправка не блокируется: окончательное слово за Telegram, его 403 при `sendVideo` тоже деактивирует цель.
 
 ## Подпись к видео
 
@@ -60,7 +62,7 @@
 | `/allow_worker <id> <fingerprint>` | Разрешить воркер |
 | `/revoke_worker <id>` | Отозвать воркер |
 
-Команды регистрируются через `setMyCommands` со scope `chat` для админа и `all_private_chats` (только `/start`, `/help`) для остальных. `admin_chat_id` для алертов — личка первого администратора.
+Команды регистрируются через `setMyCommands` со scope `chat` для админа, `all_private_chats` (только `/start`, `/help`) для остальных и `all_group_chats` (`/connect`). Регистрация и `getMe` (сохраняет `bot_username`) выполняются при старте ядра, как только воркер с токеном на связи, и при привязке администратора. `admin_chat_id` для алертов — личка первого администратора, привязавшего Telegram. `/cookies` принимает файл до 64 КБ с cookies домена `instagram.com`.
 
 ## Алерты и сводка
 

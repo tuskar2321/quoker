@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/sends"
@@ -64,6 +65,11 @@ func newEnv(t *testing.T) *env {
 		Targets:  e.targets,
 		Sends:    sends.New(st, q, vids, e.targets, clock),
 		Files:    e.files,
+		Store:    st,
+		Version:  "test",
+		Admin: admin.New(admin.Deps{
+			Store: st, Settings: e.settings, Link: noLink{}, Files: e.files, Now: clock,
+		}),
 		Settings: e.settings,
 		Ready:    st.Ready,
 		Log:      slog.New(slog.NewJSONHandler(io.Discard, nil)),
@@ -384,3 +390,10 @@ func TestRoutingAndLimits(t *testing.T) {
 }
 
 func (e *env) newAdmin() (string, int64) { return e.user(accounts.RoleAdmin) }
+
+// noLink is a link server with no workers connected.
+type noLink struct{}
+
+func (noLink) ConnectedWorkers() []string                     { return nil }
+func (noLink) BroadcastConfig(context.Context) error          { return nil }
+func (noLink) Shutdown(context.Context, string, string) error { return nil }

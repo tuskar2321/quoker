@@ -28,6 +28,29 @@ type testFixture struct {
 	stub    linkv1.LinkServiceClient
 	now     time.Time
 	results *fakeResults
+	updates *fakeUpdates
+	set     *settings.Store
+
+	lastConfig *linkv1.Config
+}
+
+// fakeUpdates counts handled bot updates.
+type fakeUpdates struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (u *fakeUpdates) HandleUpdate(_ context.Context, raw []byte) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.seen = append(u.seen, string(raw))
+	return nil
+}
+
+func (u *fakeUpdates) count() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return len(u.seen)
 }
 
 // fakeResults records the calls the server makes to its ResultHandler.
@@ -81,11 +104,14 @@ func newTestFixture(t *testing.T) *testFixture {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
 	results := &fakeResults{}
+	updates := &fakeUpdates{}
+	set := settings.New(st.DB(), nowFn)
 	srv := New(ctx, Deps{
 		Store:    st,
 		Queue:    q,
-		Settings: settings.New(st.DB(), nowFn),
+		Settings: set,
 		Results:  results,
+		Updates:  updates,
 		Log:      log,
 		Now:      nowFn,
 	})
@@ -119,6 +145,8 @@ func newTestFixture(t *testing.T) *testFixture {
 		stub:    linkv1.NewLinkServiceClient(cc),
 		now:     now,
 		results: results,
+		updates: updates,
+		set:     set,
 	}
 }
 
@@ -150,6 +178,7 @@ func (f *testFixture) connect(workerID string) linkv1.LinkService_ConnectClient 
 	if msg.GetConfig() == nil {
 		f.t.Fatalf("expected Config, got %T", msg.Msg)
 	}
+	f.lastConfig = msg.GetConfig()
 	return stream
 }
 
@@ -285,5 +314,73 @@ func TestUnknownWorker(t *testing.T) {
 	_, err = stream.Recv()
 	if err == nil {
 		t.Fatal("expected error for unknown worker")
+	}
+}
+
+func TestBotUpdatesProcessedOnceAndAcked(t *testing.T) {
+	f := newTestFixture(t)
+	stream := f.connect("worker-1")
+	if !f.lastConfig.PollUpdates {
+		t.Fatal("the first worker should become the poller")
+	}
+	for range 2 { // the poller re-sends when an ack is lost
+		if err := stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_BotUpdate{
+			BotUpdate: &linkv1.BotUpdate{UpdateId: 5, UpdateJson: `{"update_id":5}`},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acks := 0
+	for acks < 2 {
+		msg, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a := msg.GetBotUpdateAck(); a != nil {
+			if a.UpdateId != 5 {
+				t.Fatalf("ack for %d", a.UpdateId)
+			}
+			acks++
+		}
+	}
+	if n := f.updates.count(); n != 1 {
+		t.Fatalf("handled %d times, want 1", n)
+	}
+}
+
+func TestPollerHandover(t *testing.T) {
+	f := newTestFixture(t)
+	if _, err := f.srv.st.DB().ExecContext(f.ctx,
+		`INSERT INTO workers (id, fingerprint, status, created_at) VALUES ('worker-2', 'fp-worker-2', 'allowed', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	// worker-1 polled before a restart and has not come back.
+	if err := f.set.Set(f.ctx, settings.PollerWorkerID, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	stream := f.connect("worker-2")
+	if f.lastConfig.PollUpdates {
+		t.Fatal("worker-2 took over without waiting for the grace period")
+	}
+	clock := f.now
+	f.srv.now = func() time.Time { return clock }
+	f.srv.checkPoller(f.ctx) // poller noticed missing
+	clock = clock.Add(pollerGrace + time.Second)
+	f.srv.checkPoller(f.ctx)
+
+	if cur, _, _ := f.set.Get(f.ctx, settings.PollerWorkerID); cur != "worker-2" {
+		t.Fatalf("poller = %q, want worker-2", cur)
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := msg.GetConfig(); c != nil {
+			if !c.PollUpdates {
+				t.Fatal("new config does not enable polling")
+			}
+			return
+		}
 	}
 }

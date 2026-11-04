@@ -24,6 +24,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/worker/tasks"
 	"github.com/tuskar2321/quoker/internal/worker/telegram"
 	"github.com/tuskar2321/quoker/internal/worker/tmpcache"
+	"github.com/tuskar2321/quoker/internal/worker/updates"
 	"github.com/tuskar2321/quoker/internal/worker/upload"
 	"github.com/tuskar2321/quoker/internal/worker/ytdlp"
 )
@@ -82,9 +83,10 @@ func run(args []string, getenv func(string) string) error {
 		coreTransport = devIdentity{next: coreTransport, workerID: cfg.WorkerID}
 	}
 	coreHTTP := &http.Client{Transport: coreTransport}
+	tg := telegram.New(&http.Client{})
 	handlers := tasks.New(tasks.Deps{
 		YtDlp:     ytdl,
-		Telegram:  telegram.New(&http.Client{}),
+		Telegram:  tg,
 		Upload:    upload.New(coreHTTP),
 		Cache:     cache,
 		UserAgent: cfg.UserAgent,
@@ -96,6 +98,7 @@ func run(args []string, getenv func(string) string) error {
 	// client needs the runner as its task handler.
 	proxy := &configProxy{}
 
+	var poller *updates.Poller
 	taskRunner := runner.New(handlers.Runner(), proxy, cfg.MaxParallel, log.With("component", "runner"))
 
 	client := workerlink.New(workerlink.Config{
@@ -106,8 +109,13 @@ func run(args []string, getenv func(string) string) error {
 		CoreAddr:     cfg.CoreAddr,
 		TLSConfig:    tlsCfg,
 		Handler:      taskRunner,
+		// The poller exists before any ack can arrive: acks need a stream,
+		// and the stream starts with client.Run below.
+		OnBotUpdateAck: func(id int64) { poller.Ack(id) },
 	}, log, nil)
 	proxy.client = client
+	poller = updates.New(tg, client, log.With("component", "updates"))
+	go poller.Run(ctx)
 
 	log.Info("starting worker", "id", cfg.WorkerID, "core", cfg.CoreAddr, "version", cfg.Version, "ytdlp", cfg.YtdlpVersion)
 	client.Run(ctx)

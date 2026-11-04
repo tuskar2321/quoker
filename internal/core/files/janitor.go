@@ -116,6 +116,15 @@ func (s *Store) Evict(ctx context.Context) error {
 	return nil
 }
 
+// UsedBytes returns the bytes the cache occupies on disk.
+func (s *Store) UsedBytes() (int64, error) { return s.usedBytes() }
+
+// MaxBytes returns the cache limit.
+func (s *Store) MaxBytes() int64 { return s.maxBytes }
+
+// Root returns the cache directory.
+func (s *Store) Root() string { return s.root }
+
 func (s *Store) usedBytes() (int64, error) {
 	var total int64
 	for _, dir := range []string{"files", "thumbs", "partial"} {

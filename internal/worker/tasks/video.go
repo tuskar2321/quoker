@@ -22,6 +22,9 @@ const (
 	defaultDownloadBytes = 500 << 20
 	defaultSendBytes     = 50 << 20
 
+	// maxBotFileBytes caps files fetched for the core, e.g. cookies.txt.
+	maxBotFileBytes = 1 << 20
+
 	variantPhone    = "phone"
 	variantTelegram = "tg"
 )
@@ -193,6 +196,13 @@ func (h *Handlers) BotCall(ctx context.Context, task *linkv1.BotCallTask, cfg *l
 	}
 	ctx, cancel := context.WithTimeout(ctx, botCallTimeout)
 	defer cancel()
+	if task.DownloadFilePath != "" {
+		b, err := h.d.Telegram.DownloadFile(ctx, cfg.BotApiBase, cfg.BotToken, task.DownloadFilePath, maxBotFileBytes)
+		if err != nil {
+			return nil, taskError(err)
+		}
+		return &linkv1.BotCallResult{FileContent: b}, nil
+	}
 	raw, err := h.d.Telegram.Call(ctx, cfg.BotApiBase, cfg.BotToken, task.Method, []byte(task.ParamsJson))
 	if err != nil {
 		return nil, taskError(err)

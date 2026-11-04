@@ -86,10 +86,3 @@ func (s *server) patchTarget(w http.ResponseWriter, r *http.Request) {
 		Target targetDTO `json:"target"`
 	}{toTargetDTO(t)})
 }
-
-// refreshTargets handles POST /v1/targets/refresh.
-// Currently returns 202 immediately; the actual rights re-check will be
-// implemented when the bot poller is built (docs/06-telegram-bot.md).
-func (s *server) refreshTargets(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusAccepted)
-}

@@ -235,7 +235,7 @@ func (s *Service) ConsumeLinkToken(ctx context.Context, rawToken string, tgUserI
 			   (owner_user_id, chat_id, type, title, status, created_at, updated_at)
 			 VALUES (?, ?, 'private', 'Сохранённое в боте', 'active', ?, ?)
 			 ON CONFLICT(owner_user_id, chat_id) DO UPDATE SET
-			   status = 'active', updated_at = excluded.updated_at`,
+			   status = 'active', inactive_reason = NULL, updated_at = excluded.updated_at`,
 			userID, tgUserID, now.UnixMilli(), now.UnixMilli()); err != nil {
 			return fmt.Errorf("upsert private target: %w", err)
 		}

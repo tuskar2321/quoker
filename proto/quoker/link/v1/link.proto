@@ -92,6 +92,7 @@ message SendVideoResult {
 
 message BotCallResult {
   string response_json = 1;    // the "result" field of the Bot API response
+  bytes file_content = 2;      // set for BotCallTask.download_file_path
 }
 
 message BotUpdate {
@@ -159,6 +160,9 @@ message SendVideoTask {
 message BotCallTask {
   string method = 1;              // e.g. sendMessage, getChatMember, getChat
   string params_json = 2;
+  // When set, the worker downloads <bot_api_base>/file/bot<token>/<path>
+  // (the file_path from getFile) instead of calling method; up to 1 MiB.
+  string download_file_path = 3;
 }
 
 message CancelTask {

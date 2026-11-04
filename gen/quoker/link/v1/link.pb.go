@@ -804,6 +804,7 @@ func (x *SendVideoResult) GetFormatId() string {
 type BotCallResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ResponseJson  string                 `protobuf:"bytes,1,opt,name=response_json,json=responseJson,proto3" json:"response_json,omitempty"` // the "result" field of the Bot API response
+	FileContent   []byte                 `protobuf:"bytes,2,opt,name=file_content,json=fileContent,proto3" json:"file_content,omitempty"`    // set for BotCallTask.download_file_path
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -843,6 +844,13 @@ func (x *BotCallResult) GetResponseJson() string {
 		return x.ResponseJson
 	}
 	return ""
+}
+
+func (x *BotCallResult) GetFileContent() []byte {
+	if x != nil {
+		return x.FileContent
+	}
+	return nil
 }
 
 type BotUpdate struct {
@@ -1486,11 +1494,14 @@ func (x *SendVideoTask) GetHeight() int32 {
 }
 
 type BotCallTask struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Method        string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"` // e.g. sendMessage, getChatMember, getChat
-	ParamsJson    string                 `protobuf:"bytes,2,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Method     string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"` // e.g. sendMessage, getChatMember, getChat
+	ParamsJson string                 `protobuf:"bytes,2,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	// When set, the worker downloads <bot_api_base>/file/bot<token>/<path>
+	// (the file_path from getFile) instead of calling method; up to 1 MiB.
+	DownloadFilePath string `protobuf:"bytes,3,opt,name=download_file_path,json=downloadFilePath,proto3" json:"download_file_path,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *BotCallTask) Reset() {
@@ -1533,6 +1544,13 @@ func (x *BotCallTask) GetMethod() string {
 func (x *BotCallTask) GetParamsJson() string {
 	if x != nil {
 		return x.ParamsJson
+	}
+	return ""
+}
+
+func (x *BotCallTask) GetDownloadFilePath() string {
+	if x != nil {
+		return x.DownloadFilePath
 	}
 	return ""
 }
@@ -1737,9 +1755,10 @@ const file_quoker_link_v1_link_proto_rawDesc = "" +
 	"message_id\x18\x01 \x01(\x03R\tmessageId\x12\x1d\n" +
 	"\n" +
 	"sent_bytes\x18\x02 \x01(\x03R\tsentBytes\x12\x1b\n" +
-	"\tformat_id\x18\x03 \x01(\tR\bformatId\"4\n" +
+	"\tformat_id\x18\x03 \x01(\tR\bformatId\"W\n" +
 	"\rBotCallResult\x12#\n" +
-	"\rresponse_json\x18\x01 \x01(\tR\fresponseJson\"I\n" +
+	"\rresponse_json\x18\x01 \x01(\tR\fresponseJson\x12!\n" +
+	"\ffile_content\x18\x02 \x01(\fR\vfileContent\"I\n" +
 	"\tBotUpdate\x12\x1b\n" +
 	"\tupdate_id\x18\x01 \x01(\x03R\bupdateId\x12\x1f\n" +
 	"\vupdate_json\x18\x02 \x01(\tR\n" +
@@ -1790,11 +1809,12 @@ const file_quoker_link_v1_link_proto_rawDesc = "" +
 	"\n" +
 	"duration_s\x18\x06 \x01(\x05R\tdurationS\x12\x14\n" +
 	"\x05width\x18\a \x01(\x05R\x05width\x12\x16\n" +
-	"\x06height\x18\b \x01(\x05R\x06height\"F\n" +
+	"\x06height\x18\b \x01(\x05R\x06height\"t\n" +
 	"\vBotCallTask\x12\x16\n" +
 	"\x06method\x18\x01 \x01(\tR\x06method\x12\x1f\n" +
 	"\vparams_json\x18\x02 \x01(\tR\n" +
-	"paramsJson\"%\n" +
+	"paramsJson\x12,\n" +
+	"\x12download_file_path\x18\x03 \x01(\tR\x10downloadFilePath\"%\n" +
 	"\n" +
 	"CancelTask\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\"+\n" +

@@ -5,6 +5,7 @@ package link
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -53,7 +54,12 @@ type Config struct {
 	TLSConfig *tls.Config
 	// Handler processes incoming tasks.
 	Handler TaskHandler
+	// OnBotUpdateAck, when set, receives update ids the core has processed.
+	OnBotUpdateAck func(updateID int64)
 }
+
+// ErrNotConnected is returned when there is no live stream to the core.
+var ErrNotConnected = errors.New("not connected to core")
 
 // Client manages the persistent bidirectional stream to the core.
 type Client struct {
@@ -63,7 +69,28 @@ type Client struct {
 
 	mu     sync.Mutex
 	stream linkv1.LinkService_ConnectClient
+	sc     *streamConn    // writer of the live stream, nil when disconnected
 	cfgV   *linkv1.Config // last received Config from core
+}
+
+// Connected reports whether a stream to the core is up.
+func (c *Client) Connected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sc != nil
+}
+
+// SendBotUpdate forwards a Telegram update to the core.
+func (c *Client) SendBotUpdate(updateID int64, updateJSON []byte) error {
+	c.mu.Lock()
+	sc := c.sc
+	c.mu.Unlock()
+	if sc == nil {
+		return ErrNotConnected
+	}
+	return sc.send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_BotUpdate{
+		BotUpdate: &linkv1.BotUpdate{UpdateId: updateID, UpdateJson: string(updateJSON)},
+	}})
 }
 
 // New creates a Client. Call Run to start connecting.
@@ -175,16 +202,19 @@ type streamConn struct {
 	stream linkv1.LinkService_ConnectClient
 }
 
-func (sc *streamConn) SendResult(r *linkv1.TaskResult) error {
+// send serialises writes: gRPC streams forbid concurrent Send.
+func (sc *streamConn) send(m *linkv1.WorkerMessage) error {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	return sc.stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_TaskResult{TaskResult: r}})
+	return sc.stream.Send(m)
+}
+
+func (sc *streamConn) SendResult(r *linkv1.TaskResult) error {
+	return sc.send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_TaskResult{TaskResult: r}})
 }
 
 func (sc *streamConn) SendProgress(taskID string, percent int32) error {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return sc.stream.Send(&linkv1.WorkerMessage{
+	return sc.send(&linkv1.WorkerMessage{
 		Msg: &linkv1.WorkerMessage_TaskProgress{
 			TaskProgress: &linkv1.TaskProgress{TaskId: taskID, Percent: percent},
 		},
@@ -193,6 +223,14 @@ func (sc *streamConn) SendProgress(taskID string, percent int32) error {
 
 func (c *Client) runStream(ctx context.Context, stream linkv1.LinkService_ConnectClient) error {
 	sc := &streamConn{stream: stream}
+	c.mu.Lock()
+	c.sc = sc
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.sc = nil
+		c.mu.Unlock()
+	}()
 
 	taskCtx, cancelTasks := context.WithCancel(ctx)
 	defer cancelTasks()
@@ -226,7 +264,7 @@ func (c *Client) runStream(ctx context.Context, stream linkv1.LinkService_Connec
 			taskMu.Lock()
 			runningN := len(activeTasks)
 			taskMu.Unlock()
-			if err := stream.Send(&linkv1.WorkerMessage{
+			if err := sc.send(&linkv1.WorkerMessage{
 				Msg: &linkv1.WorkerMessage_Heartbeat{
 					Heartbeat: &linkv1.Heartbeat{
 						UnixMs:       c.now().UnixMilli(),
@@ -282,7 +320,9 @@ func (c *Client) runStream(ctx context.Context, stream linkv1.LinkService_Connec
 				// no-op; we just reset our timeout via receiving any message
 
 			case *linkv1.CoreMessage_BotUpdateAck:
-				// TODO: forward to telegram poller
+				if c.cfg.OnBotUpdateAck != nil {
+					c.cfg.OnBotUpdateAck(v.BotUpdateAck.UpdateId)
+				}
 
 			case *linkv1.CoreMessage_Shutdown:
 				c.log.Info("shutdown requested", "reason", v.Shutdown.Reason)

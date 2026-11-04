@@ -31,7 +31,7 @@
 | `resolve` | 60 с | 2 | `yt-dlp -J`, обложка → `PUT /thumbs`, `ResolveResult` |
 | `download` | 10 мин | 2 | Скачивание лучшего формата, `PUT /files` с докачкой, копия в tmp-кэш, `DownloadResult` |
 | `send_video` | 10 мин | 1 | Файл из tmp-кэша или скачивание формата ≤ `max_bytes`, `sendVideo`, `SendVideoResult` |
-| `bot_call` | 30 с | 2 | Произвольный вызов Bot API с `params_json`, `BotCallResult` |
+| `bot_call` | 30 с | 2 | Произвольный вызов Bot API с `params_json`, `BotCallResult`; при заданном `download_file_path` — скачивание файла бота (до 1 МиБ) в `file_content`, например `cookies.txt` для `/cookies` |
 
 Правила повторов: повторяются только `retryable` ошибки и истёкшие аренды; `send_video` — не более одного раза и только если Telegram не вернул `message_id` (иначе риск дубля в канале). Отмена — `CancelTask`: воркер убивает yt-dlp/загрузку и отвечает `TaskError{code: "cancelled"}`.
 
@@ -40,7 +40,7 @@
 - Ядро выбирает ровно одного опрашивающего воркера (`Config.poll_updates = true`); Telegram допускает одного потребителя `getUpdates` на бота (иначе 409 Conflict).
 - Опрашивающий воркер: `getUpdates` с `timeout=50`, `allowed_updates = ["message", "my_chat_member", "chat_member", "callback_query"]`.
 - Каждый апдейт пересылается как `BotUpdate`. Offset сдвигается только после `BotUpdateAck` от ядра — апдейты не теряются при обрыве.
-- Ядро обрабатывает апдейты идемпотентно по `update_id`.
+- Ядро обрабатывает апдейты идемпотентно по `update_id`, по одному в порядке прихода и отдельно от приёма стрима (обработка может ждать ответа `bot_call`). `BotUpdateAck` уходит после обработки; апдейт, который ядро не смогло записать, не подтверждается и приходит снова.
 - При отключении опрашивающего воркера ядро через 30 с назначает другого (новый `Config`).
 
 ## Коды ошибок воркера

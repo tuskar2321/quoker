@@ -169,3 +169,48 @@ func TestMissingToken(t *testing.T) {
 func asError(err error, target **telegram.Error) bool {
 	return errors.As(err, target)
 }
+
+func TestGetUpdates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		if p["offset"] != float64(41) || p["timeout"] != float64(50) {
+			t.Errorf("params = %v", p)
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"result":[{"update_id":41,"message":{"text":"a"}},{"update_id":42,"my_chat_member":{}}]}`)
+	}))
+	defer srv.Close()
+	ups, err := telegram.New(nil).GetUpdates(context.Background(), srv.URL, token, 41, 50)
+	if err != nil || len(ups) != 2 || ups[1].ID != 42 || !strings.Contains(string(ups[0].JSON), `"text":"a"`) {
+		t.Fatalf("updates = %+v, %v", ups, err)
+	}
+}
+
+func TestDownloadFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/file/bot"+token+"/documents/file_1.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, "cookie data")
+	}))
+	defer srv.Close()
+	c := telegram.New(nil)
+	ctx := context.Background()
+	b, err := c.DownloadFile(ctx, srv.URL, token, "documents/file_1.txt", 100)
+	if err != nil || string(b) != "cookie data" {
+		t.Fatalf("download = %q, %v", b, err)
+	}
+	if _, err := c.DownloadFile(ctx, srv.URL, token, "documents/file_1.txt", 5); !errs.Is(err, errs.TooLarge) {
+		t.Fatalf("limit: %v", err)
+	}
+	for _, bad := range []string{"../secret", "/etc/passwd", "a/../../b"} {
+		if _, err := c.DownloadFile(ctx, srv.URL, token, bad, 100); !errs.Is(err, errs.Internal) {
+			t.Fatalf("path %q: %v", bad, err)
+		}
+	}
+	_, err = c.DownloadFile(ctx, srv.URL, token, "documents/missing.txt", 100)
+	if err == nil || strings.Contains(err.Error(), "TEST-TOKEN") {
+		t.Fatalf("404: %v", err)
+	}
+}

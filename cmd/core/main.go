@@ -26,7 +26,9 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/bot"
+	"github.com/tuskar2321/quoker/internal/core/botapi"
 	"github.com/tuskar2321/quoker/internal/core/config"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
@@ -42,6 +44,9 @@ import (
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
 )
+
+// version is set at build time: -ldflags "-X main.version=<tag>".
+var version = "dev"
 
 const (
 	// shutdownTimeout is the graceful shutdown budget (docs/11-nfr-security.md).
@@ -136,7 +141,9 @@ func serve(cfg config.Config) error {
 	q := queue.New(st, nil)
 	videosSvc := videos.New(st, q, nil)
 	botSvc := bot.New(st, set, nil)
-	targetsSvc := targets.New(st, nil)
+	caller := botapi.New(q)
+	accSvc := accounts.New(st, nil, nil)
+	targetsSvc := targets.New(st, nil).WithBot(caller)
 	sendsSvc := sends.New(st, q, videosSvc, targetsSvc, nil)
 	cache, err := files.New(st, cfg.CacheDir, cfg.CacheMaxBytes, nil, log.With("component", "files"))
 	if err != nil {
@@ -147,14 +154,28 @@ func serve(cfg config.Config) error {
 		log.Warn("UPLOAD_BASE and DOMAIN are empty: workers cannot upload covers and files")
 	}
 
+	// The bot handler needs admin, which needs the link server; updates only
+	// arrive once gRPC serves, by which time botHandler is set.
+	var botHandler *bot.Handler
 	linkSrv := corelink.New(ctx, corelink.Deps{
 		Store:      st,
 		Queue:      q,
 		Settings:   set,
 		Results:    results.New(videosSvc, sendsSvc, cache),
+		Updates:    corelink.UpdateFunc(func(ctx context.Context, u []byte) error { return botHandler.HandleUpdate(ctx, u) }),
 		UploadBase: cfg.UploadBase,
 		Log:        log.With("component", "link"),
 	})
+	adminSvc := admin.New(admin.Deps{
+		Store: st, Settings: set, Link: linkSrv, Files: cache, Bot: caller,
+		Log: log.With("component", "admin"),
+	})
+	botHandler = bot.NewHandler(bot.HandlerDeps{
+		Link: botSvc, Accounts: accSvc, Targets: targetsSvc, Settings: set, Bot: caller, Admin: adminSvc,
+		Log: log.With("component", "bot"),
+	})
+	go botHandler.Start(ctx)
+	go adminSvc.Run(ctx)
 	gs := grpc.NewServer()
 	linkv1.RegisterLinkServiceServer(gs, linkSrv)
 
@@ -175,12 +196,15 @@ func serve(cfg config.Config) error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Deps{
-			Accounts: accounts.New(st, nil, nil),
+			Accounts: accSvc,
 			Bot:      botSvc,
 			Videos:   videosSvc,
 			Targets:  targetsSvc,
 			Sends:    sendsSvc,
 			Files:    cache,
+			Admin:    adminSvc,
+			Store:    st,
+			Version:  version,
 			Settings: set,
 			Ready:    st.Ready,
 			Log:      log,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,6 +32,12 @@ const (
 	heartbeatInterval = 15 * time.Second
 	// leaseRecoveryInterval is how often we re-queue stalled tasks.
 	leaseRecoveryInterval = 30 * time.Second
+	// updateTimeout bounds processing of one bot update.
+	updateTimeout = 2 * time.Minute
+	// pollerGrace is how long the poller may be gone before another worker
+	// takes over getUpdates (docs/04-core-worker-protocol.md).
+	pollerGrace = 30 * time.Second
+	pollerCheck = 5 * time.Second
 	// headerFingerprint is set by Caddy after mTLS verification.
 	headerFingerprint = "X-Client-Cert-Fingerprint"
 	// headerCertCN is set by Caddy to the certificate's Common Name.
@@ -52,10 +59,24 @@ type Deps struct {
 	Queue    *queue.Store
 	Settings *settings.Store
 	Results  ResultHandler // nil ignores results
+	Updates  UpdateHandler // nil drops bot updates
 	// UploadBase is sent to workers as Config.upload_base.
 	UploadBase string
 	Log        *slog.Logger
 	Now        func() time.Time
+}
+
+// UpdateHandler processes one Telegram update forwarded by the poller.
+type UpdateHandler interface {
+	HandleUpdate(ctx context.Context, updateJSON []byte) error
+}
+
+// UpdateFunc adapts a function to UpdateHandler.
+type UpdateFunc func(ctx context.Context, updateJSON []byte) error
+
+// HandleUpdate calls f.
+func (f UpdateFunc) HandleUpdate(ctx context.Context, updateJSON []byte) error {
+	return f(ctx, updateJSON)
 }
 
 // Server is the gRPC LinkService implementation.
@@ -65,12 +86,16 @@ type Server struct {
 	q       *queue.Store
 	set     *settings.Store
 	results ResultHandler
+	updates UpdateHandler
 	upload  string
 	log     *slog.Logger
 	now     func() time.Time
 
-	mu      sync.Mutex
-	workers map[string]*workerConn // keyed by worker_id
+	updateCh chan pendingUpdate
+
+	mu           sync.Mutex
+	workers      map[string]*workerConn // keyed by worker_id
+	pollerLostAt time.Time              // when the poller was last seen missing
 }
 
 // New returns a Server. It also starts background goroutines for lease
@@ -79,30 +104,48 @@ func New(ctx context.Context, d Deps) *Server {
 	if d.Results == nil {
 		d.Results = noopResults{}
 	}
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Log == nil {
+		d.Log = slog.Default()
+	}
 	srv := &Server{
-		st:      d.Store,
-		q:       d.Queue,
-		set:     d.Settings,
-		results: d.Results,
-		upload:  d.UploadBase,
-		log:     d.Log,
-		now:     d.Now,
-		workers: make(map[string]*workerConn),
+		st:       d.Store,
+		q:        d.Queue,
+		set:      d.Settings,
+		results:  d.Results,
+		updates:  d.Updates,
+		upload:   d.UploadBase,
+		log:      d.Log,
+		now:      d.Now,
+		updateCh: make(chan pendingUpdate, 256),
+		workers:  make(map[string]*workerConn),
 	}
 	go srv.leaseRecoveryLoop(ctx)
+	go srv.updateLoop(ctx)
+	go srv.pollerLoop(ctx)
 	return srv
 }
 
-// workerConn tracks an active worker stream.
+// workerConn tracks an active worker stream. Every outgoing message goes
+// through out, drained by a single sender: gRPC streams forbid concurrent Send.
 type workerConn struct {
 	id          string
-	stream      linkv1.LinkService_ConnectServer
-	lastHB      time.Time
+	out         chan *linkv1.CoreMessage
 	tasks       map[string]struct{} // task IDs currently leased to this worker
-	taskCh      chan *linkv1.Task   // tasks to send; closed on disconnect
-	cancelCh    chan string         // task IDs to cancel; closed on disconnect
 	maxParallel int
-	done        chan struct{}
+	done        chan struct{} // closed when the stream ends
+}
+
+// send queues msg; it reports false once the stream has ended.
+func (c *workerConn) send(msg *linkv1.CoreMessage) bool {
+	select {
+	case c.out <- msg:
+		return true
+	case <-c.done:
+		return false
+	}
 }
 
 // Connect implements LinkServiceServer.
@@ -111,15 +154,12 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 	if err != nil {
 		return status.Error(codes.Unauthenticated, err.Error())
 	}
-
-	// Verify worker is known and allowed.
 	workerID, err := s.VerifyWorker(stream.Context(), fingerprint)
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
 	log := s.log.With("worker_id", workerID)
 
-	// Receive Hello.
 	msg, err := stream.Recv()
 	if err != nil {
 		return status.Errorf(codes.Internal, "recv hello: %v", err)
@@ -132,7 +172,6 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 		return status.Errorf(codes.InvalidArgument, "worker_id %q must match certificate CN %q",
 			hello.WorkerId, workerID)
 	}
-
 	maxParallel := int(hello.MaxParallel)
 	if maxParallel <= 0 {
 		maxParallel = 2
@@ -140,43 +179,49 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 
 	conn := &workerConn{
 		id:          workerID,
-		stream:      stream,
-		lastHB:      s.now(),
+		out:         make(chan *linkv1.CoreMessage, 32),
 		tasks:       make(map[string]struct{}),
-		taskCh:      make(chan *linkv1.Task, 8),
-		cancelCh:    make(chan string, 8),
 		maxParallel: maxParallel,
 		done:        make(chan struct{}),
 	}
 	s.registerWorker(conn)
 	defer s.unregisterWorker(conn)
-
-	// Update worker metadata in DB.
 	s.updateWorkerSeen(stream.Context(), workerID, hello)
+	s.claimPollerIfFree(stream.Context(), workerID)
 
-	// Send initial Config.
 	cfg, err := s.loadConfig(stream.Context(), workerID)
 	if err != nil {
 		return status.Errorf(codes.Internal, "load config: %v", err)
 	}
-	if err := stream.Send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Config{Config: cfg}}); err != nil {
-		return err
-	}
-	log.Info("worker connected", "max_parallel", maxParallel, "version", hello.Version)
+	conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Config{Config: cfg}})
+	log.Info("worker connected", "max_parallel", maxParallel, "version", hello.Version, "poller", cfg.PollUpdates)
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
-	// Sender goroutine: drains taskCh and cancelCh.
 	sendErr := make(chan error, 1)
-	go func() {
-		sendErr <- s.senderLoop(ctx, conn, stream)
-	}()
-
-	// Task dispatcher goroutine: picks tasks from queue and sends them.
+	go func() { sendErr <- s.senderLoop(ctx, conn, stream) }()
 	go s.dispatchLoop(ctx, conn)
 
-	// Heartbeat ticker.
+	type received struct {
+		msg *linkv1.WorkerMessage
+		err error
+	}
+	recvCh := make(chan received, 1)
+	go func() {
+		for {
+			m, err := stream.Recv()
+			select {
+			case recvCh <- received{m, err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	hbTick := time.NewTicker(heartbeatInterval)
 	defer hbTick.Stop()
 	hbDeadline := time.NewTimer(heartbeatTimeout)
@@ -190,37 +235,24 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 			}
 			return err
 		case <-hbTick.C:
-			if err := stream.Send(&linkv1.CoreMessage{
-				Msg: &linkv1.CoreMessage_Heartbeat{
-					Heartbeat: &linkv1.Heartbeat{UnixMs: s.now().UnixMilli()},
-				},
-			}); err != nil {
-				return err
-			}
+			conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Heartbeat{
+				Heartbeat: &linkv1.Heartbeat{UnixMs: s.now().UnixMilli()},
+			}})
 		case <-hbDeadline.C:
 			log.Warn("heartbeat timeout, closing stream")
 			return status.Error(codes.DeadlineExceeded, "heartbeat timeout")
-		default:
-			// Receive next message.
-			msg, err := stream.Recv()
-			if err != nil {
-				return err
+		case r := <-recvCh:
+			if r.err != nil {
+				return r.err
 			}
 			hbDeadline.Reset(heartbeatTimeout)
-			if err := s.handleWorkerMsg(stream.Context(), conn, msg, log); err != nil {
-				return err
-			}
+			s.handleWorkerMsg(ctx, conn, r.msg, log)
 		}
 	}
 }
 
-func (s *Server) handleWorkerMsg(ctx context.Context, conn *workerConn, msg *linkv1.WorkerMessage, log *slog.Logger) error {
+func (s *Server) handleWorkerMsg(ctx context.Context, conn *workerConn, msg *linkv1.WorkerMessage, log *slog.Logger) {
 	switch v := msg.Msg.(type) {
-	case *linkv1.WorkerMessage_Heartbeat:
-		s.mu.Lock()
-		conn.lastHB = s.now()
-		s.mu.Unlock()
-
 	case *linkv1.WorkerMessage_TaskProgress:
 		if err := s.q.SetProgress(ctx, v.TaskProgress.TaskId, conn.id, int(v.TaskProgress.Percent)); err != nil {
 			log.Warn("set progress failed", "task", v.TaskProgress.TaskId, "err", err)
@@ -232,11 +264,11 @@ func (s *Server) handleWorkerMsg(ctx context.Context, conn *workerConn, msg *lin
 		}
 
 	case *linkv1.WorkerMessage_BotUpdate:
-		if err := s.handleBotUpdate(ctx, conn, v.BotUpdate, log); err != nil {
-			log.Warn("handle bot update failed", "update_id", v.BotUpdate.UpdateId, "err", err)
+		select {
+		case s.updateCh <- pendingUpdate{conn: conn, update: v.BotUpdate}:
+		case <-ctx.Done():
 		}
 	}
-	return nil
 }
 
 func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *linkv1.TaskResult, log *slog.Logger) error {
@@ -324,47 +356,69 @@ func (noopResults) TaskSucceeded(context.Context, *queue.Task, *linkv1.TaskResul
 }
 func (noopResults) TaskFailed(context.Context, *queue.Task) error { return nil }
 
-func (s *Server) handleBotUpdate(ctx context.Context, conn *workerConn, u *linkv1.BotUpdate, log *slog.Logger) error {
-	// Store update_id for idempotency.
-	_, err := s.st.DB().ExecContext(ctx,
+type pendingUpdate struct {
+	conn   *workerConn
+	update *linkv1.BotUpdate
+}
+
+// updateLoop processes bot updates one at a time, in arrival order, away from
+// the stream's receive loop: handlers may wait for bot_call results that
+// arrive on that same stream. The ack goes out only after processing, so the
+// poller re-delivers anything the core did not finish.
+func (s *Server) updateLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case p := <-s.updateCh:
+			if err := s.processUpdate(ctx, p.update); err != nil {
+				s.log.Warn("bot update not processed", "update_id", p.update.UpdateId, "err", err)
+				continue // no ack: the poller will send it again
+			}
+			p.conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_BotUpdateAck{
+				BotUpdateAck: &linkv1.BotUpdateAck{UpdateId: p.update.UpdateId},
+			}})
+		}
+	}
+}
+
+func (s *Server) processUpdate(ctx context.Context, u *linkv1.BotUpdate) error {
+	var seen int
+	err := s.st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM bot_updates WHERE update_id = ?`, u.UpdateId).Scan(&seen)
+	if err != nil {
+		return fmt.Errorf("check bot update: %w", err)
+	}
+	if seen > 0 {
+		return nil
+	}
+	if s.updates != nil {
+		hctx, cancel := context.WithTimeout(ctx, updateTimeout)
+		err := s.updates.HandleUpdate(hctx, []byte(u.UpdateJson))
+		cancel()
+		if err != nil {
+			// Logged and dropped: retrying a broken update forever would
+			// block every update behind it.
+			s.log.Error("handle bot update", "update_id", u.UpdateId, "err", err)
+		}
+	}
+	_, err = s.st.DB().ExecContext(ctx,
 		`INSERT OR IGNORE INTO bot_updates (update_id, processed_at) VALUES (?, ?)`,
 		u.UpdateId, s.now().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("record bot update: %w", err)
 	}
-	// TODO: dispatch to bot package for processing.
-	log.Info("bot update received", "update_id", u.UpdateId)
-
-	// Ack so the worker advances its offset.
-	return conn.stream.Send(&linkv1.CoreMessage{
-		Msg: &linkv1.CoreMessage_BotUpdateAck{
-			BotUpdateAck: &linkv1.BotUpdateAck{UpdateId: u.UpdateId},
-		},
-	})
+	return nil
 }
 
-// senderLoop drains taskCh and cancelCh and writes to the stream.
+// senderLoop is the only writer of the stream.
 func (s *Server) senderLoop(ctx context.Context, conn *workerConn, stream linkv1.LinkService_ConnectServer) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case t, ok := <-conn.taskCh:
-			if !ok {
-				return nil
-			}
-			if err := stream.Send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Task{Task: t}}); err != nil {
-				return err
-			}
-		case taskID, ok := <-conn.cancelCh:
-			if !ok {
-				return nil
-			}
-			if err := stream.Send(&linkv1.CoreMessage{
-				Msg: &linkv1.CoreMessage_CancelTask{
-					CancelTask: &linkv1.CancelTask{TaskId: taskID},
-				},
-			}); err != nil {
+		case m := <-conn.out:
+			if err := stream.Send(m); err != nil {
 				return err
 			}
 		}
@@ -406,9 +460,7 @@ func (s *Server) dispatchLoop(ctx context.Context, conn *workerConn) {
 				conn.tasks[task.ID] = struct{}{}
 				running = len(conn.tasks)
 				s.mu.Unlock()
-				select {
-				case conn.taskCh <- protoTask:
-				case <-ctx.Done():
+				if !conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Task{Task: protoTask}}) {
 					return
 				}
 			}
@@ -497,51 +549,68 @@ func (s *Server) registerWorker(conn *workerConn) {
 func (s *Server) unregisterWorker(conn *workerConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.workers, conn.id)
+	if s.workers[conn.id] == conn { // a reconnect may already have replaced us
+		delete(s.workers, conn.id)
+	}
 	close(conn.done)
 }
 
-// SendConfig broadcasts a fresh Config to a specific worker (called when
-// settings change).
+// SendConfig pushes a fresh Config to a connected worker (after settings
+// change); a disconnected worker gets it on its next connect.
 func (s *Server) SendConfig(ctx context.Context, workerID string) error {
-	s.mu.Lock()
-	conn, ok := s.workers[workerID]
-	s.mu.Unlock()
+	conn, ok := s.conn(workerID)
 	if !ok {
-		return nil // worker not connected; it will get the config on next connect
+		return nil
 	}
 	cfg, err := s.loadConfig(ctx, workerID)
 	if err != nil {
 		return err
 	}
-	return conn.stream.Send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Config{Config: cfg}})
+	conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Config{Config: cfg}})
+	return nil
 }
 
-// CancelTask sends a CancelTask message to the worker holding the task.
+// BroadcastConfig pushes a fresh Config to every connected worker.
+func (s *Server) BroadcastConfig(ctx context.Context) error {
+	var errs []error
+	for _, id := range s.ConnectedWorkers() {
+		errs = append(errs, s.SendConfig(ctx, id))
+	}
+	return errors.Join(errs...)
+}
+
+// ConnectedWorkers returns the ids of workers with a live stream, sorted.
+func (s *Server) ConnectedWorkers() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.workers))
+	for id := range s.workers {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func (s *Server) conn(workerID string) (*workerConn, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.workers[workerID]
+	return c, ok
+}
+
+// CancelTask asks the worker holding the task to stop it.
 func (s *Server) CancelTask(workerID, taskID string) {
-	s.mu.Lock()
-	conn, ok := s.workers[workerID]
-	s.mu.Unlock()
-	if !ok {
-		return
-	}
-	select {
-	case conn.cancelCh <- taskID:
-	default:
+	if conn, ok := s.conn(workerID); ok {
+		conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_CancelTask{CancelTask: &linkv1.CancelTask{TaskId: taskID}}})
 	}
 }
 
-// Shutdown sends a Shutdown message to a worker and removes it.
+// Shutdown asks a worker to finish its tasks and exit.
 func (s *Server) Shutdown(_ context.Context, workerID, reason string) error {
-	s.mu.Lock()
-	conn, ok := s.workers[workerID]
-	s.mu.Unlock()
-	if !ok {
-		return nil
+	if conn, ok := s.conn(workerID); ok {
+		conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Shutdown{Shutdown: &linkv1.Shutdown{Reason: reason}}})
 	}
-	return conn.stream.Send(&linkv1.CoreMessage{
-		Msg: &linkv1.CoreMessage_Shutdown{Shutdown: &linkv1.Shutdown{Reason: reason}},
-	})
+	return nil
 }
 
 func (s *Server) leaseRecoveryLoop(ctx context.Context) {
@@ -615,4 +684,68 @@ func (s *Server) certInfo(ctx context.Context) (fingerprint, cn string, err erro
 // GRPCServer creates a configured *grpc.Server for the link service.
 func GRPCServer(opts ...grpc.ServerOption) *grpc.Server {
 	return grpc.NewServer(opts...)
+}
+
+// claimPollerIfFree makes workerID the getUpdates poller when none is set.
+func (s *Server) claimPollerIfFree(ctx context.Context, workerID string) {
+	cur, _, err := s.set.Get(ctx, settings.PollerWorkerID)
+	if err != nil || cur != "" {
+		return
+	}
+	if err := s.set.Set(ctx, settings.PollerWorkerID, workerID); err != nil {
+		s.log.Warn("assign poller", "err", err)
+		return
+	}
+	s.log.Info("poller assigned", "worker_id", workerID)
+}
+
+// pollerLoop hands getUpdates to another connected worker once the current
+// poller has been gone for pollerGrace. Telegram allows only one consumer.
+func (s *Server) pollerLoop(ctx context.Context) {
+	t := time.NewTicker(pollerCheck)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.checkPoller(ctx)
+		}
+	}
+}
+
+func (s *Server) checkPoller(ctx context.Context) {
+	cur, _, err := s.set.Get(ctx, settings.PollerWorkerID)
+	if err != nil {
+		return
+	}
+	if _, ok := s.conn(cur); ok {
+		s.mu.Lock()
+		s.pollerLostAt = time.Time{}
+		s.mu.Unlock()
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	if s.pollerLostAt.IsZero() {
+		s.pollerLostAt = now
+	}
+	lost := now.Sub(s.pollerLostAt)
+	s.mu.Unlock()
+	connected := s.ConnectedWorkers()
+	if (cur != "" && lost < pollerGrace) || len(connected) == 0 {
+		return
+	}
+	next := connected[0]
+	if err := s.set.Set(ctx, settings.PollerWorkerID, next); err != nil {
+		s.log.Warn("reassign poller", "err", err)
+		return
+	}
+	s.mu.Lock()
+	s.pollerLostAt = time.Time{}
+	s.mu.Unlock()
+	s.log.Info("poller reassigned", "from", cur, "to", next)
+	if err := s.SendConfig(ctx, next); err != nil {
+		s.log.Warn("send poller config", "err", err)
+	}
 }

@@ -281,6 +281,18 @@ func (s *Service) User(ctx context.Context, id int64) (User, error) {
 	return u, nil
 }
 
+// UserByTelegram returns the user linked to a Telegram account.
+func (s *Service) UserByTelegram(ctx context.Context, tgUserID int64) (User, error) {
+	u, err := scanUser(s.db().QueryRowContext(ctx, `SELECT `+userColumns+` FROM users u WHERE u.tg_user_id = ?`, tgUserID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, errs.New(errs.NotFound, "telegram account not linked")
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("get user by telegram: %w", err)
+	}
+	return u, nil
+}
+
 // ListUsers returns all users ordered by id.
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db().QueryContext(ctx, `SELECT `+userColumns+` FROM users u ORDER BY u.id`)

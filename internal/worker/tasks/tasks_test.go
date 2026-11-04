@@ -95,6 +95,8 @@ func (f *fakeServices) serve(w http.ResponseWriter, r *http.Request) {
 			f.previews++
 		}
 		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, 100+len(f.videos))
+	case strings.HasPrefix(p, "/file/bot"):
+		_, _ = io.WriteString(w, "file:"+p[strings.Index(p, "/documents/")+1:]) //nolint:gosec // test server echo
 	case strings.HasSuffix(p, "/getChat"):
 		_, _ = io.WriteString(w, `{"ok":true,"result":{"id":-5,"title":"G"}}`)
 	default:
@@ -303,4 +305,12 @@ func downloads(calls [][]string) []string {
 		}
 	}
 	return out
+}
+
+func TestBotCall_downloadFile(t *testing.T) {
+	e := newEnv(t, ytdlptest.Scenario{})
+	res, err := e.h.BotCall(context.Background(), &linkv1.BotCallTask{Method: "getFile", DownloadFilePath: "documents/c.txt"}, e.cfg)
+	if err != nil || string(res.FileContent) != "file:documents/c.txt" {
+		t.Fatalf("res = %v, err = %v", res, err)
+	}
 }

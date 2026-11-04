@@ -12,11 +12,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
 	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
+	"github.com/tuskar2321/quoker/internal/core/store"
 	"github.com/tuskar2321/quoker/internal/core/targets"
 	"github.com/tuskar2321/quoker/internal/core/videos"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
@@ -41,7 +43,10 @@ type Deps struct {
 	Targets  *targets.Service
 	Sends    *sends.Service
 	Files    *files.Store
+	Admin    *admin.Service
+	Store    *store.Store // read-only queries for admin status
 	Settings *settings.Store
+	Version  string                      // core build version
 	Ready    func(context.Context) error // /readyz probe
 	Log      *slog.Logger
 	Now      func() time.Time // defaults to time.Now
@@ -54,6 +59,9 @@ type server struct {
 	targets   *targets.Service
 	sends     *sends.Service
 	files     *files.Store
+	admin     *admin.Service
+	st        *store.Store
+	version   string
 	settings  *settings.Store
 	ready     func(context.Context) error
 	now       func() time.Time
@@ -74,6 +82,9 @@ func New(d Deps) http.Handler {
 		targets:   d.Targets,
 		sends:     d.Sends,
 		files:     d.Files,
+		admin:     d.Admin,
+		st:        d.Store,
+		version:   d.Version,
 		settings:  d.Settings,
 		ready:     d.Ready,
 		now:       d.Now,
@@ -129,6 +140,11 @@ func New(d Deps) http.Handler {
 
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(requireAdmin)
+				r.Get("/status", s.adminStatus)
+				r.Get("/workers", s.listWorkers)
+				r.Post("/workers", s.allowWorker)
+				r.Delete("/workers/{worker_id}", s.revokeWorker)
+				r.Put("/instagram-cookies", s.putInstagramCookies)
 				r.Get("/invites", s.listInvites)
 				r.Post("/invites", s.createInvite)
 				r.Delete("/invites/{invite_id}", s.revokeInvite)

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -248,4 +249,76 @@ func (p *progressReader) Read(b []byte) (int, error) {
 		p.fn(p.sent, p.total)
 	}
 	return n, err
+}
+
+// Update is one raw update from getUpdates.
+type Update struct {
+	ID   int64
+	JSON []byte
+}
+
+// AllowedUpdates are the update kinds the core handles (docs/04-core-worker-protocol.md).
+var AllowedUpdates = []string{"message", "my_chat_member", "chat_member", "callback_query"}
+
+// GetUpdates long-polls for updates starting at offset.
+func (c *Client) GetUpdates(ctx context.Context, base, token string, offset int64, timeoutS int) ([]Update, error) {
+	params, err := json.Marshal(map[string]any{"offset": offset, "timeout": timeoutS, "allowed_updates": AllowedUpdates})
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.Call(ctx, base, token, "getUpdates", params)
+	if err != nil {
+		return nil, err
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, errs.New(errs.UpstreamError, "getUpdates: result is not an array")
+	}
+	out := make([]Update, 0, len(items))
+	for _, it := range items {
+		var head struct {
+			UpdateID int64 `json:"update_id"`
+		}
+		if err := json.Unmarshal(it, &head); err != nil || head.UpdateID == 0 {
+			continue
+		}
+		out = append(out, Update{ID: head.UpdateID, JSON: it})
+	}
+	return out, nil
+}
+
+var validFilePath = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]{0,255}$`)
+
+// DownloadFile fetches a file_path returned by getFile, up to maxBytes.
+func (c *Client) DownloadFile(ctx context.Context, base, token, filePath string, maxBytes int64) ([]byte, error) {
+	if token == "" {
+		return nil, errs.New(errs.Internal, "bot token is not configured")
+	}
+	if !validFilePath.MatchString(filePath) || strings.Contains(filePath, "..") {
+		return nil, errs.New(errs.Internal, "malformed file_path")
+	}
+	if base == "" {
+		base = DefaultBase
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(base, "/")+"/file/bot"+token+"/"+filePath, nil)
+	if err != nil {
+		return nil, errs.New(errs.Internal, "build file request") // the URL holds the token
+	}
+	res, err := c.hc.Do(req)
+	if err != nil {
+		return nil, transportError(ctx, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return nil, &Error{Status: res.StatusCode, Description: "file download: " + http.StatusText(res.StatusCode)}
+	}
+	b, err := io.ReadAll(io.LimitReader(res.Body, maxBytes+1))
+	if err != nil {
+		return nil, transportError(ctx, err)
+	}
+	if int64(len(b)) > maxBytes {
+		return nil, errs.New(errs.TooLarge, "file is larger than the limit")
+	}
+	return b, nil
 }
