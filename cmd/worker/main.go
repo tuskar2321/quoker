@@ -11,14 +11,21 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
 	"github.com/tuskar2321/quoker/internal/shared/logging"
 	workerlink "github.com/tuskar2321/quoker/internal/worker/link"
 	"github.com/tuskar2321/quoker/internal/worker/runner"
+	"github.com/tuskar2321/quoker/internal/worker/tasks"
+	"github.com/tuskar2321/quoker/internal/worker/telegram"
+	"github.com/tuskar2321/quoker/internal/worker/tmpcache"
+	"github.com/tuskar2321/quoker/internal/worker/upload"
+	"github.com/tuskar2321/quoker/internal/worker/ytdlp"
 )
 
 // version is set at build time: -ldflags "-X main.version=<tag>".
@@ -50,14 +57,40 @@ func run(args []string, getenv func(string) string) error {
 		return fmt.Errorf("tls: %w", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := os.MkdirAll(filepath.Join(cfg.TmpDir, "work"), 0o700); err != nil {
+		return fmt.Errorf("tmp dir: %w", err)
+	}
+	ytdl := ytdlp.New(cfg.YtdlpBin, cfg.UserAgent, filepath.Join(cfg.TmpDir, "work"))
+	if v, err := ytdl.Version(ctx); err != nil {
+		log.Warn("yt-dlp unavailable, video tasks will fail", "bin", cfg.YtdlpBin, "err", err)
+	} else {
+		cfg.YtdlpVersion = v
+	}
+	cache, err := tmpcache.New(filepath.Join(cfg.TmpDir, "files"), cfg.TmpCacheMaxBytes)
+	if err != nil {
+		return err
+	}
+	// Uploads to the core carry the client certificate; Telegram and the
+	// platforms are reached with the default transport.
+	coreHTTP := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true}}
+	handlers := tasks.New(tasks.Deps{
+		YtDlp:     ytdl,
+		Telegram:  telegram.New(&http.Client{}),
+		Upload:    upload.New(coreHTTP),
+		Cache:     cache,
+		UserAgent: cfg.UserAgent,
+		Log:       log.With("component", "tasks"),
+	})
+
 	// configProxy forwards CoreConfig calls to the link client once it exists.
 	// This breaks the circular dependency: runner needs the client's config,
 	// client needs the runner as its task handler.
 	proxy := &configProxy{}
 
-	taskRunner := runner.New(runner.Handlers{
-		// yt-dlp, Telegram and upload handlers wired here when implemented.
-	}, proxy, cfg.MaxParallel, log.With("component", "runner"))
+	taskRunner := runner.New(handlers.Runner(), proxy, cfg.MaxParallel, log.With("component", "runner"))
 
 	client := workerlink.New(workerlink.Config{
 		WorkerID:     cfg.WorkerID,
@@ -70,10 +103,7 @@ func run(args []string, getenv func(string) string) error {
 	}, log, nil)
 	proxy.client = client
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	log.Info("starting worker", "id", cfg.WorkerID, "core", cfg.CoreAddr, "version", cfg.Version)
+	log.Info("starting worker", "id", cfg.WorkerID, "core", cfg.CoreAddr, "version", cfg.Version, "ytdlp", cfg.YtdlpVersion)
 	client.Run(ctx)
 	log.Info("worker stopped")
 	return nil

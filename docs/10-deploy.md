@@ -95,7 +95,7 @@ w.{$DOMAIN} {
 
 `core/.env`: `DOMAIN`, `ACME_EMAIL`, `DB_PATH=/data/quoker.db`, `CACHE_DIR=/cache`, `CACHE_MAX_BYTES=3221225472`, `RELEASES_DIR=/releases`, `BACKUP_DIR=/backups`, `LOG_LEVEL=info`, `TZ=Europe/Moscow`. Токен бота и cookies — не здесь, а в БД (`/status`, `/cookies`, CLI `core settings set bot_token`).
 
-`worker/.env`: `CORE_ADDR=w.<домен>:443`, `TRANSPORT=direct|reality`, `CLIENT_CERT=/certs/worker.crt`, `CLIENT_KEY=/certs/worker.key`, `CA_CERT=/certs/ca.crt`, `MAX_PARALLEL=2`, `TMP_CACHE_MAX_BYTES=1073741824`, `LOG_LEVEL=info`.
+`worker/.env`: `CORE_ADDR=w.<домен>:443`, `TRANSPORT=direct|reality`, `CLIENT_CERT=/certs/worker.crt`, `CLIENT_KEY=/certs/worker.key`, `CA_CERT=/certs/ca.crt`, `MAX_PARALLEL=2`, `TMP_DIR=/tmp/quoker`, `TMP_CACHE_MAX_BYTES=1073741824`, `YTDLP_BIN=yt-dlp`, `USER_AGENT=<мобильный UA, по умолчанию встроенный>`, `LOG_LEVEL=info`.
 
 ## Сертификаты
 

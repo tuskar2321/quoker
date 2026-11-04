@@ -8,7 +8,7 @@
 - Caddy на `w.<домен>` проверяет сертификат (`client_auth require_and_verify`) и проксирует gRPC в `core:9090` по h2c, передавая отпечаток сертификата в заголовке `X-Client-Cert-Fingerprint` и CN в `X-Client-Cert-CN`.
 - Ядро дополнительно сверяет отпечаток со списком разрешённых воркеров в БД (`workers.status = allowed`). Неизвестный или отозванный отпечаток — стрим закрывается с `PERMISSION_DENIED`.
 - Файлы идут отдельно от стрима, обычным HTTPS на тот же хост с тем же mTLS:
-  - `PUT /internal/v1/files/{video_id}` — mp4, `Content-Range: bytes <from>-<to>/<total>` для докачки; `HEAD` возвращает уже принятый размер.
+  - `PUT /internal/v1/files/{video_id}` — mp4, `Content-Range: bytes <from>-<to>/<total>` для докачки; `HEAD` возвращает уже принятый размер в `Content-Length` (`404`, если ничего не принято). Если `<from>` не совпадает с принятым размером — `416`, воркер перечитывает `HEAD` и продолжает.
   - `PUT /internal/v1/thumbs/{video_id}` — jpeg до 512 КБ.
 - Запасной транспорт REALITY (см. `docs/10-deploy.md`) прозрачен для протокола: меняется только сетевой путь до ядра.
 

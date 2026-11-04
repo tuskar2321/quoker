@@ -183,6 +183,9 @@ type TaskError struct {
 	Code      string
 	Message   string
 	Retryable bool
+	// Raw Bot API error, when the failure came from Telegram.
+	TelegramCode        int32
+	TelegramDescription string
 	// Cause is the underlying error; it is logged but never sent to the core.
 	Cause error
 }
@@ -212,9 +215,11 @@ func toTaskError(err error) *linkv1.TaskError {
 	var te *TaskError
 	if errors.As(err, &te) {
 		return &linkv1.TaskError{
-			Code:      te.Code,
-			Message:   te.Message,
-			Retryable: te.Retryable,
+			Code:                te.Code,
+			Message:             te.Message,
+			Retryable:           te.Retryable,
+			TelegramErrorCode:   te.TelegramCode,
+			TelegramDescription: te.TelegramDescription,
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
