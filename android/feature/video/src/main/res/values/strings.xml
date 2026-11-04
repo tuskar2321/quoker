@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="video_sheet_title">Видео</string>
+    <string name="video_platform_tiktok" translatable="false">TikTok</string>
+    <string name="video_platform_instagram" translatable="false">Instagram</string>
+    <string name="video_author">\@%1$s</string>
+    <string name="video_no_watermark">без водяного знака</string>
+    <string name="video_meta_size_no_watermark">%1$s · без водяного знака</string>
+    <string name="video_cover_description">Обложка видео</string>
+
+    <string name="video_action_download">Скачать</string>
+    <string name="video_action_send">Отправить в Telegram</string>
+    <string name="video_action_open_original">Открыть оригинал</string>
+
+    <string name="video_download_preparing">Готовим видео…</string>
+    <string name="video_download_saved">Сохранено</string>
+    <string name="video_download_failed">Не скачано</string>
+    <string name="video_download_hint">Можно закрыть — скачивание продолжится в фоне, прогресс будет в уведомлении.</string>
+    <string name="video_download_hint_no_notifications">Можно закрыть — скачивание продолжится в фоне.</string>
+    <string name="video_open_failed">Не нашлось приложения, чтобы открыть видео</string>
+
+    <string name="video_send_sending">Отправляется в «%1$s»…</string>
+    <string name="video_send_sent">Отправлено в «%1$s»</string>
+    <string name="video_send_failed">Не отправлено</string>
+
+    <string name="video_error_title">Не получилось открыть видео</string>
+    <string name="video_error_private_tiktok">Видео приватное или удалено. Проверьте, открывается ли оно в TikTok без входа в аккаунт.</string>
+    <string name="video_error_private_instagram">Видео приватное или удалено. Проверьте, открывается ли оно в Instagram без входа в аккаунт.</string>
+    <string name="video_error_rate_limited">Слишком много запросов, попробуйте через час</string>
+</resources>

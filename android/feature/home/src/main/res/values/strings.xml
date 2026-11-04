@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Main (Main.dc.html) -->
+    <string name="home_link_label">Ссылка на TikTok или Reels</string>
+    <string name="home_link_placeholder">https://</string>
+    <string name="home_clipboard_paste">Вставить ссылку из буфера</string>
+    <string name="home_open_video">Открыть видео</string>
+    <string name="home_recent">Недавние</string>
+    <string name="home_all_history">Вся история</string>
+
+    <string name="home_recent_title">\@%1$s · %2$s</string>
+    <string name="home_platform_tiktok">TikTok</string>
+    <string name="home_platform_reels">Reels</string>
+    <string name="home_platform_unknown">Видео</string>
+    <string name="home_badge_downloaded">Скачано</string>
+    <string name="home_badge_sent">→ %1$s</string>
+    <string name="home_badge_send_failed">Ошибка отправки</string>
+
+    <string name="home_no_workers_title">Нет подключённых воркеров</string>
+    <string name="home_no_workers_text">Видео не скачиваются и не отправляются, пока ни один воркер не на связи с ядром. Проверьте сервер воркера.</string>
+</resources>

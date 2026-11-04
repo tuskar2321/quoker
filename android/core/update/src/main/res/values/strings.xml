@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_available_title">Доступна новая версия</string>
+    <string name="update_version">Версия %1$s</string>
+    <string name="update_changelog_title">Что нового</string>
+    <string name="update_action_update">Обновить</string>
+    <string name="update_action_later">Позже</string>
+    <string name="update_action_install">Установить</string>
+    <string name="update_downloading">Скачивается · %1$d%%</string>
+    <string name="update_ready">Обновление скачано</string>
+    <string name="update_failed_title">Не удалось обновить</string>
+    <string name="update_up_to_date">У вас последняя версия</string>
+
+    <string name="update_required_title">Обновите приложение</string>
+    <string name="update_required_text">Эта версия Quoker больше не поддерживается. Установите новую, чтобы продолжить.</string>
+
+    <string name="update_error_checksum">Файл обновления повреждён. Попробуйте ещё раз</string>
+    <string name="update_error_download">Не удалось скачать обновление</string>
+    <string name="update_error_install">Не удалось установить обновление</string>
+    <string name="update_error_no_release">Обновление пока недоступно. Попробуйте позже</string>
+</resources>

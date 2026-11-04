@@ -30,7 +30,9 @@ deploy/*/backups/
 *.sqlite-shm
 # android
 android/.gradle/
+android/build-logic/.gradle/
 android/.kotlin/
+android/build-logic/.kotlin/
 android/**/build/
 android/captures/
 android/local.properties

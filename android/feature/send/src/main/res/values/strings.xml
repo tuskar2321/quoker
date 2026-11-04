@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="send_title">Куда отправить</string>
+    <string name="send_targets_description">Цель отправки</string>
+
+    <string name="send_target_type_group">Группа</string>
+    <string name="send_target_type_channel">Канал</string>
+    <string name="send_target_type_private">Личные сообщения</string>
+    <string name="send_target_type_unknown">Чат</string>
+    <string name="send_target_last_used">%1$s · последняя</string>
+
+    <string name="send_reason_bot_removed_group">Бот удалён из группы</string>
+    <string name="send_reason_bot_removed_channel">Бот удалён из канала</string>
+    <string name="send_reason_bot_removed_chat">Бот удалён из чата</string>
+    <string name="send_reason_bot_not_admin">У бота нет права публиковать сообщения</string>
+    <string name="send_reason_user_left">Вы больше не участник группы</string>
+    <string name="send_reason_user_not_admin">Вы больше не администратор канала</string>
+    <string name="send_reason_unknown">Недоступно</string>
+
+    <string name="send_caption_label">Подпись</string>
+    <string name="send_caption_placeholder">Ссылка на оригинал</string>
+    <string name="send_caption_empty_hint">Видео уйдёт без подписи</string>
+    <plurals name="send_caption_left">
+        <item quantity="one">Остался %d символ</item>
+        <item quantity="few">Осталось %d символа</item>
+        <item quantity="many">Осталось %d символов</item>
+        <item quantity="other">Осталось %d символа</item>
+    </plurals>
+
+    <string name="send_sign_as_user">Подписать «от %1$s»</string>
+    <string name="send_sign_as_user_generic">Подписать своим именем</string>
+    <string name="send_sign_only_groups">Только в группах</string>
+
+    <string name="send_button">Отправить в «%1$s»</string>
+    <string name="send_button_no_target">Отправить</string>
+
+    <string name="send_empty_title">Пока некуда отправлять</string>
+    <string name="send_empty_group">Группа: добавьте бота Quoker в группу — он поздоровается, и группа появится здесь. Если бот уже в группе, отправьте в ней /connect.</string>
+    <string name="send_empty_channel">Канал: сделайте бота администратором канала с правом публиковать сообщения.</string>
+    <string name="send_empty_hint">Сначала привяжите Telegram в приложении, затем нажмите «Обновить список».</string>
+    <string name="send_refresh_list">Обновить список</string>
+    <string name="send_load_error_title">Не удалось загрузить список</string>
+</resources>

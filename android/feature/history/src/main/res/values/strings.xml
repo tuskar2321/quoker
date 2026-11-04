@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="history_title">История</string>
+
+    <string name="history_platform_tiktok">TikTok</string>
+    <string name="history_platform_instagram">Reels</string>
+    <string name="history_author">\@%1$s</string>
+    <string name="history_author_unknown">Автор неизвестен</string>
+    <string name="history_meta_separator">" · "</string>
+
+    <string name="history_badge_downloaded">Скачано</string>
+    <string name="history_badge_sent">→ %1$s</string>
+    <string name="history_badge_send_failed">Ошибка отправки</string>
+    <plurals name="history_badge_sent_more">
+        <item quantity="one">ещё %d</item>
+        <item quantity="few">ещё %d</item>
+        <item quantity="many">ещё %d</item>
+        <item quantity="other">ещё %d</item>
+    </plurals>
+
+    <string name="history_action_download">Скачать</string>
+    <string name="history_action_download_again">Скачать снова</string>
+    <string name="history_action_send">Отправить</string>
+    <string name="history_action_retry_send">Повторить</string>
+
+    <string name="history_empty_title">Здесь пока пусто</string>
+    <string name="history_empty_text">Скачанные и отправленные видео появятся здесь.</string>
+    <string name="history_error_title">Не удалось загрузить историю</string>
+    <string name="history_load_more_error">Не удалось загрузить продолжение</string>
+</resources>

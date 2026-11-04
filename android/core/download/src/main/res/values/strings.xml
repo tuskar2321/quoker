@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="download_channel_name">Загрузки</string>
+    <string name="download_channel_description">Прогресс скачивания видео в галерею</string>
+    <string name="download_notification_default_title">Видео</string>
+    <string name="download_notification_preparing">Готовим видео…</string>
+    <string name="download_notification_saved">Сохранено</string>
+    <string name="download_notification_saved_text">%1$s · нажмите, чтобы открыть</string>
+    <string name="download_notification_failed">Не удалось скачать</string>
+    <string name="download_notification_cancel">Отменить</string>
+
+    <string name="download_error_storage">Не удалось сохранить видео в галерею</string>
+    <string name="download_error_storage_permission">Нужен доступ к памяти, чтобы сохранить видео</string>
+</resources>

@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings -->
+    <string name="settings_title">Настройки</string>
+    <string name="settings_section_telegram">Telegram</string>
+    <string name="settings_telegram_linked">Аккаунт привязан</string>
+    <string name="settings_telegram_not_linked">Telegram не привязан</string>
+    <string name="settings_telegram_not_linked_hint">Без привязки нельзя отправлять видео в Telegram</string>
+    <string name="settings_telegram_link">Привязать Telegram</string>
+    <string name="settings_telegram_unlink">Отвязать</string>
+    <string name="settings_unlink_title">Отвязать Telegram?</string>
+    <string name="settings_unlink_text">Отправлять видео будет нельзя, пока не привяжете Telegram снова. Группы и каналы придётся подключить заново.</string>
+    <string name="settings_section_targets">Куда отправлять</string>
+    <string name="settings_targets_refresh">Обновить список</string>
+    <string name="settings_targets_empty_title">Пока некуда отправлять</string>
+    <string name="settings_targets_empty_text">Добавьте бота в группу или канал, затем обновите список</string>
+    <string name="settings_targets_refresh_queued">Проверяем права в чатах. Список обновится через несколько секунд.</string>
+    <string name="settings_how_to_add">Как добавить бота в канал или группу</string>
+    <string name="settings_section_app">Приложение</string>
+    <string name="settings_admin">Администрирование</string>
+    <string name="settings_version">Версия</string>
+    <string name="settings_check_updates">Проверить обновления</string>
+    <string name="settings_logout">Выйти</string>
+    <string name="settings_logout_title">Выйти из Quoker?</string>
+    <string name="settings_logout_text">Чтобы войти снова, понадобится новый код приглашения.</string>
+
+    <string name="target_type_group">Группа</string>
+    <string name="target_type_channel">Канал</string>
+    <string name="target_type_private">Личные сообщения</string>
+    <string name="target_type_unknown">Чат</string>
+    <string name="target_reason_bot_removed_group">Бот удалён из группы</string>
+    <string name="target_reason_bot_removed_channel">Бот удалён из канала</string>
+    <string name="target_reason_bot_not_admin">У бота нет права публиковать</string>
+    <string name="target_reason_user_left">Вы больше не участник</string>
+    <string name="target_reason_user_left_private">Telegram отвязан</string>
+    <string name="target_reason_user_not_admin">Вы не администратор канала</string>
+    <string name="target_reason_unknown">Недоступно</string>
+
+    <!-- How to add the bot -->
+    <string name="howto_title">Как добавить бота</string>
+    <string name="howto_group_title">В группу</string>
+    <string name="howto_group_step1">Добавьте бота в группу из своего Telegram — того, что привязан к Quoker.</string>
+    <string name="howto_group_step2">Группа появится в списке «Куда отправлять». Если нет — нажмите «Обновить».</string>
+    <string name="howto_group_step3">Бота уже добавил кто-то другой? Отправьте в группе команду /connect.</string>
+    <string name="howto_channel_title">В канал</string>
+    <string name="howto_channel_step1">Сделайте бота администратором канала с правом публикации сообщений.</string>
+    <string name="howto_channel_step2">Бота уже назначил другой администратор? Нажмите «Обновить» над списком.</string>
+    <string name="howto_done">Понятно</string>
+
+    <!-- Admin status -->
+    <string name="admin_title">Администрирование</string>
+    <string name="admin_section_state">Состояние</string>
+    <string name="admin_section_manage">Управление</string>
+    <string name="admin_alert_no_workers_title">Нет воркеров на связи</string>
+    <string name="admin_alert_no_workers_text">Скачивание и отправка не работают, пока не подключится хотя бы один воркер.</string>
+    <string name="admin_alert_instagram_title">Instagram требует вход</string>
+    <plurals name="admin_alert_instagram_text">
+        <item quantity="one">%d ошибка Instagram за 24 ч. Если это login_required — обновите cookies служебного аккаунта.</item>
+        <item quantity="few">%d ошибки Instagram за 24 ч. Если это login_required — обновите cookies служебного аккаунта.</item>
+        <item quantity="many">%d ошибок Instagram за 24 ч. Если это login_required — обновите cookies служебного аккаунта.</item>
+        <item quantity="other">%d ошибки Instagram за 24 ч. Если это login_required — обновите cookies служебного аккаунта.</item>
+    </plurals>
+    <string name="admin_alert_disk_title">Диск ядра заполнен на %1$d%%</string>
+    <string name="admin_alert_disk_text">Кэш занимает %1$s. Освободите место на сервере.</string>
+    <string name="admin_tile_workers">Воркеры</string>
+    <string name="admin_tile_workers_online">%1$d онлайн</string>
+    <string name="admin_tile_workers_poller">%1$s · опрашивает</string>
+    <string name="admin_tile_workers_no_poller">никто не опрашивает</string>
+    <string name="admin_tile_queue">Очередь</string>
+    <string name="admin_tile_queue_running">%1$d в работе</string>
+    <plurals name="admin_tile_queue_waiting">
+        <item quantity="one">%d ждёт</item>
+        <item quantity="few">%d ждут</item>
+        <item quantity="many">%d ждут</item>
+        <item quantity="other">%d ждут</item>
+    </plurals>
+    <string name="admin_tile_errors">Ошибки за 24 ч</string>
+    <string name="admin_tile_errors_by_platform">TikTok %1$d · Reels %2$d · TG %3$d</string>
+    <string name="admin_tile_disk">Диск ядра</string>
+    <string name="admin_tile_disk_percent">%1$d%%</string>
+    <string name="admin_tile_disk_cache">кэш %1$s из %2$s</string>
+    <string name="admin_invites">Приглашения</string>
+    <plurals name="admin_invites_active">
+        <item quantity="one">%d активное</item>
+        <item quantity="few">%d активных</item>
+        <item quantity="many">%d активных</item>
+        <item quantity="other">%d активного</item>
+    </plurals>
+    <string name="admin_invites_none">Нет активных</string>
+    <string name="admin_users">Пользователи</string>
+    <plurals name="admin_users_blocked_short">
+        <item quantity="one">%d заблокирован</item>
+        <item quantity="few">%d заблокированы</item>
+        <item quantity="many">%d заблокированы</item>
+        <item quantity="other">%d заблокированы</item>
+    </plurals>
+    <string name="admin_users_summary">%1$d · %2$s</string>
+    <string name="admin_cookies">Cookies Instagram</string>
+    <string name="admin_cookies_upload">Загрузить</string>
+    <string name="admin_cookies_unknown">Дата обновления неизвестна</string>
+    <string name="admin_cookies_today">Обновлены сегодня</string>
+    <plurals name="admin_cookies_days_ago">
+        <item quantity="one">Обновлены %d день назад</item>
+        <item quantity="few">Обновлены %d дня назад</item>
+        <item quantity="many">Обновлены %d дней назад</item>
+        <item quantity="other">Обновлены %d дня назад</item>
+    </plurals>
+    <string name="admin_cookies_uploaded">Cookies загружены</string>
+    <string name="admin_cookies_too_large">Файл больше 64 КБ — это не похоже на cookies.txt</string>
+    <string name="admin_cookies_empty">Файл пустой</string>
+    <string name="admin_cookies_unreadable">Не удалось прочитать файл</string>
+    <string name="admin_workers">Воркеры</string>
+    <string name="admin_workers_ytdlp">yt-dlp %1$s</string>
+    <string name="admin_workers_none_online">Нет воркеров на связи</string>
+
+    <!-- Invites -->
+    <string name="invites_title">Приглашения</string>
+    <string name="invites_role">Роль</string>
+    <string name="role_user">Пользователь</string>
+    <string name="role_admin">Администратор</string>
+    <string name="role_user_lower">пользователь</string>
+    <string name="role_admin_lower">администратор</string>
+    <string name="invites_valid_for">Действует</string>
+    <plurals name="invites_days">
+        <item quantity="one">%d день</item>
+        <item quantity="few">%d дня</item>
+        <item quantity="many">%d дней</item>
+        <item quantity="other">%d дня</item>
+    </plurals>
+    <string name="invites_create">Создать приглашение</string>
+    <string name="invites_new_code">Новый код · %1$s · до %2$s</string>
+    <string name="invites_new_code_no_expiry">Новый код · %1$s</string>
+    <string name="invites_shown_once">Код показывается один раз. Отправьте его другу.</string>
+    <string name="invites_copy">Скопировать</string>
+    <string name="invites_copied">Скопировано</string>
+    <string name="invites_share">Поделиться</string>
+    <string name="invites_share_text">Приглашение в Quoker: %1$s</string>
+    <string name="invites_clip_label">Код приглашения</string>
+    <string name="invites_section_issued">Выданные</string>
+    <string name="invites_empty">Пока нет выданных приглашений</string>
+    <string name="invites_mask">%1$s-••••</string>
+    <string name="invites_until">%1$s · до %2$s</string>
+    <string name="invites_expired">%1$s · истёк %2$s</string>
+    <string name="invites_used">Использован</string>
+    <string name="invites_used_by">Использован · %1$s</string>
+    <string name="invites_revoke">Отозвать</string>
+    <string name="invites_revoke_title">Отозвать приглашение %1$s?</string>
+    <string name="invites_revoke_text">Код перестанет работать. Уже зарегистрированных пользователей это не затронет.</string>
+
+    <!-- Users -->
+    <string name="users_title">Пользователи</string>
+    <plurals name="users_count_people">
+        <item quantity="one">%d человек</item>
+        <item quantity="few">%d человека</item>
+        <item quantity="many">%d человек</item>
+        <item quantity="other">%d человека</item>
+    </plurals>
+    <plurals name="users_count_active">
+        <item quantity="one">%d активен</item>
+        <item quantity="few">%d активны</item>
+        <item quantity="many">%d активны</item>
+        <item quantity="other">%d активны</item>
+    </plurals>
+    <string name="users_counters">%1$s · %2$s · %3$s</string>
+    <string name="users_user_fallback">Пользователь #%1$d</string>
+    <string name="users_admin">Админ</string>
+    <string name="users_you">это вы</string>
+    <string name="users_never_seen">ещё не заходил</string>
+    <string name="users_telegram_not_linked">Telegram не привязан</string>
+    <plurals name="users_targets">
+        <item quantity="one">%d цель</item>
+        <item quantity="few">%d цели</item>
+        <item quantity="many">%d целей</item>
+        <item quantity="other">%d цели</item>
+    </plurals>
+    <string name="users_blocked">Заблокирован</string>
+    <string name="users_block">Заблокировать</string>
+    <string name="users_unblock">Разблокировать</string>
+    <string name="users_block_title">Заблокировать %1$s?</string>
+    <string name="users_block_text">Все его сессии сразу завершатся. Цели и история сохранятся.</string>
+    <string name="users_unblock_title">Разблокировать %1$s?</string>
+    <string name="users_unblock_text">Сессии, завершённые блокировкой, снова заработают.</string>
+    <string name="users_note">Блокировка сразу завершает все сессии пользователя. Его цели и история сохраняются.</string>
+    <string name="users_empty">Пользователей пока нет</string>
+
+    <!-- Workers -->
+    <string name="workers_title">Воркеры</string>
+    <string name="workers_allow">Разрешить воркер</string>
+    <string name="workers_online">Онлайн</string>
+    <string name="workers_offline">Офлайн</string>
+    <string name="workers_last_seen">был %1$s</string>
+    <string name="workers_poller">опрашивает</string>
+    <string name="workers_revoked">Отозван</string>
+    <string name="workers_versions">Воркер %1$s · yt-dlp %2$s</string>
+    <string name="workers_version_unknown">—</string>
+    <string name="workers_revoke">Отозвать</string>
+    <string name="workers_revoke_title">Отозвать %1$s?</string>
+    <string name="workers_revoke_text">Соединение воркера сразу разорвётся, подключиться снова он не сможет.</string>
+    <string name="workers_note">Отзыв сразу разрывает соединение воркера. Чтобы вернуть его, разрешите воркер заново.</string>
+    <string name="workers_empty">Воркеров пока нет</string>
+    <string name="workers_allow_title">Разрешить воркер</string>
+    <string name="workers_allow_id">ID воркера</string>
+    <string name="workers_allow_id_placeholder">worker-2</string>
+    <string name="workers_allow_fingerprint">Отпечаток сертификата</string>
+    <string name="workers_allow_fingerprint_hint">SHA-256 клиентского сертификата, 64 hex-символа</string>
+    <string name="workers_allow_fingerprint_invalid">Нужно 64 hex-символа</string>
+    <string name="workers_allow_confirm">Разрешить</string>
+
+    <!-- Common -->
+    <string name="time_today_at">сегодня, %1$s</string>
+    <string name="time_yesterday">вчера</string>
+    <string name="admin_load_error_title">Не удалось загрузить</string>
+</resources>

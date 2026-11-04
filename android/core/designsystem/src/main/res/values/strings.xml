@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="brand_name" translatable="false">quoker</string>
+    <string name="logo_content_description">Quoker</string>
+
+    <!-- Common actions -->
+    <string name="action_retry">Повторить</string>
+    <string name="action_try_again">Попробовать снова</string>
+    <string name="action_close">Закрыть</string>
+    <string name="action_cancel">Отмена</string>
+    <string name="action_ok">ОК</string>
+    <string name="action_copy">Скопировать</string>
+    <string name="action_share">Поделиться</string>
+    <string name="action_open">Открыть</string>
+    <string name="action_back">Назад</string>
+    <string name="action_refresh">Обновить</string>
+    <string name="action_paste">Вставить</string>
+    <string name="action_settings">Настройки</string>
+    <string name="action_more">Ещё</string>
+
+    <string name="banner_no_network">Нет сети. Проверьте подключение к интернету</string>
+
+    <!-- Day groups and units -->
+    <string name="day_today">Сегодня</string>
+    <string name="day_yesterday">Вчера</string>
+    <string name="size_bytes">%1$s Б</string>
+    <string name="size_kilobytes">%1$s КБ</string>
+    <string name="size_megabytes">%1$s МБ</string>
+    <string name="size_gigabytes">%1$s ГБ</string>
+
+    <!-- Download progress button -->
+    <string name="download_progress">Скачивается · %1$d%%</string>
+    <string name="download_cancel">Отменить скачивание</string>
+
+    <!-- Error codes from docs/03-public-api.md: error_<code> -->
+    <string name="error_unauthorized">Сессия завершилась. Войдите снова</string>
+    <string name="error_forbidden">Недостаточно прав для этого действия</string>
+    <string name="error_user_blocked">Доступ закрыт администратором</string>
+    <string name="error_upgrade_required">Обновите приложение, чтобы продолжить</string>
+    <string name="error_invalid_request">Запрос не прошёл проверку</string>
+    <string name="error_invalid_invite">Код не подошёл</string>
+    <string name="error_telegram_not_linked">Сначала привяжите Telegram</string>
+    <string name="error_link_token_expired">Ссылка истекла — получите новую</string>
+    <string name="error_unsupported_url">Это не видео TikTok или Reels</string>
+    <string name="error_unsupported_content">Фото, карусели, сторис и эфиры не поддерживаются</string>
+    <string name="error_private_video">Видео приватное или удалено. Проверьте, открывается ли оно без входа в аккаунт.</string>
+    <string name="error_not_found">Ничего не нашлось</string>
+    <string name="error_file_not_ready">Файл ещё готовится, попробуйте чуть позже</string>
+    <string name="error_too_large">Видео больше 50 МБ — в Telegram не отправить, но можно скачать</string>
+    <string name="error_target_inactive">Бот больше не может писать в этот чат</string>
+    <string name="error_target_forbidden">У вас больше нет прав в этом чате</string>
+    <string name="error_rate_limited">Слишком много запросов, попробуйте позже</string>
+    <string name="error_worker_unavailable">Сервис временно недоступен</string>
+    <string name="error_upstream_error">Платформа не ответила, попробуйте ещё раз</string>
+    <string name="error_internal">Что-то пошло не так на сервере</string>
+    <string name="error_network">Нет соединения с сервером</string>
+    <string name="error_generic">Что-то пошло не так. Попробуйте ещё раз</string>
+</resources>

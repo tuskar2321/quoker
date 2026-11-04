@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Invite (Invite.dc.html) -->
+    <string name="invite_title">Вход по приглашению</string>
+    <string name="invite_text">Quoker — закрытое приложение. Введите код, который вам прислал администратор.</string>
+    <string name="invite_code_label">Код приглашения</string>
+    <string name="invite_code_hint">Формат: XXXX-XXXX</string>
+    <string name="invite_continue">Продолжить</string>
+
+    <!-- Telegram link (Telegram.dc.html) -->
+    <string name="telegram_title">Привяжите Telegram</string>
+    <string name="telegram_text">Через бота приложение отправляет видео в ваши чаты и каналы. Другие пользователи ваш список не увидят.</string>
+    <string name="telegram_step_start">Нажмите кнопку ниже и в боте — «Start»</string>
+    <string name="telegram_step_add">Добавьте бота в группу или администратором в канал с правом публикации — цель сама появится в списке</string>
+    <string name="telegram_waiting">Ждём подтверждения в Telegram…</string>
+    <string name="telegram_expired">Ссылка истекла — получить новую</string>
+    <string name="telegram_open_bot">Открыть бота в Telegram</string>
+    <string name="telegram_link_ttl">Ссылка действует 10 минут</string>
+    <string name="telegram_skip">Пропустить</string>
+    <string name="telegram_open_failed">Не удалось открыть ссылку: нет ни Telegram, ни браузера</string>
+</resources>
