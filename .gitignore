@@ -9,6 +9,7 @@ deploy/*/certs/
 deploy/*/xray/config.json
 # go
 /bin/
+/worker
 /dist/
 *.test
 coverage.out

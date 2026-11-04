@@ -3,6 +3,7 @@ module github.com/tuskar2321/quoker
 go 1.26.0
 
 require (
+	github.com/go-chi/chi/v5 v5.5.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.61.1

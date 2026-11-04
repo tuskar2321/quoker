@@ -5,7 +5,7 @@ BUF           ?= buf
 GOLANGCI_LINT ?= golangci-lint
 ENV_FILE      ?= .env.local
 
-.PHONY: gen lint-proto test lint vet run-core run-worker dev
+.PHONY: gen lint-proto build test lint vet run-core run-worker dev
 
 gen: ## Generate Go code from proto into gen/
 	$(BUF) lint
@@ -13,6 +13,9 @@ gen: ## Generate Go code from proto into gen/
 
 lint-proto:
 	$(BUF) lint
+
+build:
+	go build -o bin/ ./cmd/...
 
 test:
 	go test -race ./...

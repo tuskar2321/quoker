@@ -6,7 +6,7 @@
 
 - JSON, UTF-8, `snake_case`. Время — RFC 3339 в UTC.
 - Аутентификация: `Authorization: Bearer <session_token>`. Без токена доступны только `POST /v1/auth/register` и `GET /v1/app/version`.
-- Заголовки клиента: `X-Quoker-Version-Code: <int>`, `X-Device-Id: <uuid>`. Ядро отклоняет версии ниже `min_supported_version_code` с `426 upgrade_required`.
+- Заголовки клиента: `X-Quoker-Version-Code: <int>`, `X-Device-Id: <uuid>`. Ядро отклоняет версии ниже `min_supported_version_code` с `426 upgrade_required`; запросы без заголовка версии не проверяются.
 - Идемпотентность: `POST /v1/sends` принимает `Idempotency-Key` (UUID); повтор с тем же ключом возвращает ту же отправку.
 - Пагинация курсором: `?cursor=<opaque>&limit=<1..50>`, ответ `{ "items": [...], "next_cursor": "..." | null }`.
 
@@ -24,6 +24,7 @@
 | `forbidden` | 403 | Нет прав (не админ, чужая цель) |
 | `user_blocked` | 403 | Пользователь заблокирован |
 | `upgrade_required` | 426 | Версия приложения ниже минимальной |
+| `invalid_request` | 400 | Тело или параметры запроса не проходят проверку (не JSON, неверный формат поля, значение вне диапазона) |
 | `invalid_invite` | 400 | Инвайт не найден, истёк или использован |
 | `telegram_not_linked` | 409 | Действие требует привязанного Telegram |
 | `link_token_expired` | 410 | Токен привязки истёк |
@@ -137,12 +138,12 @@
 | Метод | Путь | Тело | Ответ |
 | --- | --- | --- | --- |
 | GET | `/v1/admin/status` | — | `{workers: [...], queue: {queued, running}, errors_24h: {tiktok, instagram, telegram}, disk: {used_bytes, total_bytes, cache_bytes}, versions}` |
-| GET | `/v1/admin/invites` | — | `{items}` |
+| GET | `/v1/admin/invites` | — | `{items: [{id, role, code_prefix, created_at, expires_at, used_by, used_at}]}` — без отозванных, новые сверху; `code_prefix` — первые 4 символа кода для маски «K7Q2-••••» |
 | POST | `/v1/admin/invites` | `{role: user\|admin, expires_in_days}` | `201 {code, expires_at}` — код показывается один раз |
 | DELETE | `/v1/admin/invites/{id}` | — | `204` |
-| GET | `/v1/admin/users` | — | `{items: [{id, role, status, telegram_username, created_at, last_seen_at}]}` |
-| POST | `/v1/admin/users/{id}/block` | — | `204`, сессии отозваны |
-| POST | `/v1/admin/users/{id}/unblock` | — | `204` |
+| GET | `/v1/admin/users` | — | `{items: [{id, role, status, telegram_username, telegram_first_name, targets_count, created_at, last_seen_at}]}` |
+| POST | `/v1/admin/users/{id}/block` | — | `204`, сессии отозваны; заблокировать себя нельзя — `403 forbidden` |
+| POST | `/v1/admin/users/{id}/unblock` | — | `204`, сессии, отозванные блокировкой, восстанавливаются (вышедшие через logout — нет) |
 | PUT | `/v1/admin/instagram-cookies` | `text/plain` (Netscape cookies.txt) | `204` |
 | GET | `/v1/admin/workers` | — | `{items: [{id, fingerprint, status, connected, version, ytdlp_version, last_seen_at, is_poller}]}` |
 | POST | `/v1/admin/workers` | `{id, fingerprint}` | `201` — разрешить |
