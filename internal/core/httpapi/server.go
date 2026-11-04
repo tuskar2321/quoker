@@ -12,14 +12,20 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
+	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
+	"github.com/tuskar2321/quoker/internal/core/targets"
+	"github.com/tuskar2321/quoker/internal/core/videos"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
 const (
 	// registerPerHour is the registration limit per IP.
 	registerPerHour = 5
+	// sendsPerHour is the send limit per user.
+	sendsPerHour = 30
 	// apiTimeout bounds JSON endpoints; file streaming gets its own limits.
 	apiTimeout = 15 * time.Second
 )
@@ -27,6 +33,10 @@ const (
 // Deps are the dependencies of the API.
 type Deps struct {
 	Accounts *accounts.Service
+	Bot      *bot.Service
+	Videos   *videos.Service
+	Targets  *targets.Service
+	Sends    *sends.Service
 	Settings *settings.Store
 	Ready    func(context.Context) error // /readyz probe
 	Log      *slog.Logger
@@ -34,11 +44,16 @@ type Deps struct {
 }
 
 type server struct {
-	acc      *accounts.Service
-	settings *settings.Store
-	ready    func(context.Context) error
-	now      func() time.Time
-	register *ratelimit.Memory
+	acc       *accounts.Service
+	bot       *bot.Service
+	videos    *videos.Service
+	targets   *targets.Service
+	sends     *sends.Service
+	settings  *settings.Store
+	ready     func(context.Context) error
+	now       func() time.Time
+	register  *ratelimit.Memory
+	sendLimit *ratelimit.Memory
 }
 
 // New builds the HTTP handler of the public API.
@@ -47,11 +62,16 @@ func New(d Deps) http.Handler {
 		d.Now = time.Now
 	}
 	s := &server{
-		acc:      d.Accounts,
-		settings: d.Settings,
-		ready:    d.Ready,
-		now:      d.Now,
-		register: ratelimit.NewMemory(registerPerHour, time.Hour, d.Now),
+		acc:       d.Accounts,
+		bot:       d.Bot,
+		videos:    d.Videos,
+		targets:   d.Targets,
+		sends:     d.Sends,
+		settings:  d.Settings,
+		ready:     d.Ready,
+		now:       d.Now,
+		register:  ratelimit.NewMemory(registerPerHour, time.Hour, d.Now),
+		sendLimit: ratelimit.NewMemory(sendsPerHour, time.Hour, d.Now),
 	}
 
 	r := chi.NewRouter()
@@ -75,6 +95,20 @@ func New(d Deps) http.Handler {
 			r.Use(requireSession(d.Accounts))
 			r.Post("/auth/logout", s.logout)
 			r.Get("/me", s.me)
+			r.Post("/auth/telegram/link", s.createTelegramLink)
+			r.Get("/auth/telegram/status", s.telegramLinkStatus)
+			r.Delete("/auth/telegram", s.unlinkTelegram)
+
+			r.Post("/videos/resolve", s.resolveVideo)
+			r.Get("/videos/{video_id}", s.getVideo)
+			r.Get("/tasks/{task_id}", s.getTask)
+
+			r.Get("/targets", s.listTargets)
+			r.Post("/targets/refresh", s.refreshTargets)
+			r.Patch("/targets/{id}", s.patchTarget)
+
+			r.Post("/sends", s.createSend)
+			r.Get("/sends/{id}", s.getSend)
 
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(requireAdmin)

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
 	"github.com/tuskar2321/quoker/internal/core/queue"
@@ -36,11 +37,21 @@ const (
 	headerCertCN = "X-Client-Cert-CN"
 )
 
+// ResultHandler applies task outcomes to domain state.
+type ResultHandler interface {
+	// TaskSucceeded runs before the task is marked done, so readers that see
+	// status=done also see the applied result.
+	TaskSucceeded(ctx context.Context, t *queue.Task, r *linkv1.TaskResult) error
+	// TaskFailed runs once a task has failed with no retries left.
+	TaskFailed(ctx context.Context, t *queue.Task) error
+}
+
 // Deps are the dependencies of the link server.
 type Deps struct {
 	Store    *store.Store
 	Queue    *queue.Store
 	Settings *settings.Store
+	Results  ResultHandler // nil ignores results
 	Log      *slog.Logger
 	Now      func() time.Time
 }
@@ -48,11 +59,12 @@ type Deps struct {
 // Server is the gRPC LinkService implementation.
 type Server struct {
 	linkv1.UnimplementedLinkServiceServer
-	st  *store.Store
-	q   *queue.Store
-	set *settings.Store
-	log *slog.Logger
-	now func() time.Time
+	st      *store.Store
+	q       *queue.Store
+	set     *settings.Store
+	results ResultHandler
+	log     *slog.Logger
+	now     func() time.Time
 
 	mu      sync.Mutex
 	workers map[string]*workerConn // keyed by worker_id
@@ -61,10 +73,14 @@ type Server struct {
 // New returns a Server. It also starts background goroutines for lease
 // recovery and config broadcasts; use a context to stop them.
 func New(ctx context.Context, d Deps) *Server {
+	if d.Results == nil {
+		d.Results = noopResults{}
+	}
 	srv := &Server{
 		st:      d.Store,
 		q:       d.Queue,
 		set:     d.Settings,
+		results: d.Results,
 		log:     d.Log,
 		now:     d.Now,
 		workers: make(map[string]*workerConn),
@@ -224,22 +240,85 @@ func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *link
 	delete(conn.tasks, r.TaskId)
 	s.mu.Unlock()
 
-	var p queue.CompleteParams
-	p.TaskID = r.TaskId
-	p.WorkerID = conn.id
+	task, err := s.q.Get(ctx, r.TaskId)
+	if err != nil {
+		return fmt.Errorf("get task: %w", err)
+	}
+	if task.Status != queue.StatusLeased || task.WorkerID != conn.id {
+		log.Warn("stale task result ignored", "task_id", r.TaskId, "status", task.Status)
+		return nil
+	}
 
+	p := queue.CompleteParams{TaskID: r.TaskId, WorkerID: conn.id}
 	if e := r.GetError(); e != nil {
 		p.ErrCode = e.Code
 		p.ErrMsg = e.Message
 		p.Retryable = e.Retryable
+	} else {
+		if p.Result, err = resultPayload(r); err != nil {
+			return err
+		}
+		// A failed apply must not turn into a retry: for send_video that
+		// would post the video twice.
+		if err := s.results.TaskSucceeded(ctx, task, r); err != nil {
+			log.Error("apply task result", "task_id", r.TaskId, "kind", task.Kind, "err", err)
+		}
 	}
-	// TODO: when videos/sends packages exist, decode and apply the result.
-	if err := s.q.Complete(ctx, p); err != nil {
-		log.Warn("complete task", "task", r.TaskId, "err", err)
-	}
-	log.Info("task result", "task", r.TaskId, "error_code", p.ErrCode)
+	s.complete(ctx, p, log)
+	log.Info("task result", "task_id", r.TaskId, "kind", task.Kind, "error_code", p.ErrCode)
 	return nil
 }
+
+// complete marks a task finished and notifies the result handler when the
+// task has failed for good.
+func (s *Server) complete(ctx context.Context, p queue.CompleteParams, log *slog.Logger) {
+	if err := s.q.Complete(ctx, p); err != nil {
+		log.Warn("complete task", "task_id", p.TaskID, "err", err)
+		return
+	}
+	if p.ErrCode != "" {
+		s.notifyIfFailed(ctx, p.TaskID, log)
+	}
+}
+
+func (s *Server) notifyIfFailed(ctx context.Context, taskID string, log *slog.Logger) {
+	t, err := s.q.Get(ctx, taskID)
+	if err != nil {
+		log.Warn("reload task", "task_id", taskID, "err", err)
+		return
+	}
+	if t.Status != queue.StatusFailed {
+		return
+	}
+	if err := s.results.TaskFailed(ctx, t); err != nil {
+		log.Error("apply task failure", "task_id", taskID, "kind", t.Kind, "err", err)
+	}
+}
+
+// resultPayload encodes the kind-specific result stored in tasks.result.
+func resultPayload(r *linkv1.TaskResult) ([]byte, error) {
+	var m proto.Message
+	switch v := r.Result.(type) {
+	case *linkv1.TaskResult_Resolve:
+		m = v.Resolve
+	case *linkv1.TaskResult_Download:
+		m = v.Download
+	case *linkv1.TaskResult_SendVideo:
+		m = v.SendVideo
+	case *linkv1.TaskResult_BotCall:
+		m = v.BotCall
+	default:
+		return nil, fmt.Errorf("task %s: empty result", r.TaskId)
+	}
+	return marshalProto(m)
+}
+
+type noopResults struct{}
+
+func (noopResults) TaskSucceeded(context.Context, *queue.Task, *linkv1.TaskResult) error {
+	return nil
+}
+func (noopResults) TaskFailed(context.Context, *queue.Task) error { return nil }
 
 func (s *Server) handleBotUpdate(ctx context.Context, conn *workerConn, u *linkv1.BotUpdate, log *slog.Logger) error {
 	// Store update_id for idempotency.
@@ -313,10 +392,10 @@ func (s *Server) dispatchLoop(ctx context.Context, conn *workerConn) {
 				protoTask, err := s.buildProtoTask(ctx, task)
 				if err != nil {
 					s.log.Warn("build proto task", "task", task.ID, "err", err)
-					_ = s.q.Complete(ctx, queue.CompleteParams{
+					s.complete(ctx, queue.CompleteParams{
 						TaskID: task.ID, WorkerID: conn.id,
 						ErrCode: "internal", ErrMsg: err.Error(), Retryable: true,
-					})
+					}, s.log)
 					break
 				}
 				s.mu.Lock()
@@ -471,8 +550,13 @@ func (s *Server) leaseRecoveryLoop(ctx context.Context) {
 			rec, failed, err := s.q.RecoverExpiredLeases(ctx)
 			if err != nil {
 				s.log.Warn("lease recovery", "err", err)
-			} else if rec+failed > 0 {
-				s.log.Info("lease recovery", "recovered", rec, "failed", failed)
+				continue
+			}
+			if rec+len(failed) > 0 {
+				s.log.Info("lease recovery", "recovered", rec, "failed", len(failed))
+			}
+			for _, id := range failed {
+				s.notifyIfFailed(ctx, id, s.log)
 			}
 		}
 	}

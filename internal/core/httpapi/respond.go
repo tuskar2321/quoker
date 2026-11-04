@@ -84,17 +84,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError renders err in the public error format. Errors without a
 // domain code become "internal" and are logged with their details.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
-	code := errs.CodeOf(err)
-	status, ok := statusOf[code]
-	if !ok { // a worker-only code leaked: never expose it
-		code, status = errs.Internal, http.StatusInternalServerError
-	}
+	code := publicCode(errs.CodeOf(err))
+	status := statusOf[code]
 	info := infoFrom(r.Context())
 	info.errorCode = code
 	if status >= http.StatusInternalServerError {
 		loggerFrom(r.Context()).ErrorContext(r.Context(), "request failed", "error", err.Error())
 	}
-	writeJSON(w, status, errorBody{Error: errorDTO{Code: code, Message: messageOf[code], Retryable: code.Retryable()}})
+	writeJSON(w, status, errorBody{Error: toErrorDTO(code)})
+}
+
+// publicCode hides worker-only codes behind internal.
+func publicCode(c errs.Code) errs.Code {
+	if _, ok := statusOf[c]; !ok {
+		return errs.Internal
+	}
+	return c
+}
+
+func toErrorDTO(c errs.Code) errorDTO {
+	c = publicCode(c)
+	return errorDTO{Code: c, Message: messageOf[c], Retryable: c.Retryable()}
 }
 
 func writeRateLimited(w http.ResponseWriter, r *http.Request, retryAfter time.Duration) {

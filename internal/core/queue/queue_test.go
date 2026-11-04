@@ -192,8 +192,8 @@ func TestRecoverExpiredLeases(t *testing.T) {
 	// Advance past lease expiry.
 	f.now = task.LeaseUntil.Add(time.Second)
 	rec, failed, err := f.q.RecoverExpiredLeases(f.ctx)
-	if err != nil || rec != 1 || failed != 0 {
-		t.Fatalf("recover: rec=%d failed=%d err=%v", rec, failed, err)
+	if err != nil || rec != 1 || len(failed) != 0 {
+		t.Fatalf("recover: rec=%d failed=%v err=%v", rec, failed, err)
 	}
 	got, _ := f.q.Get(f.ctx, task.ID)
 	if got.Status != StatusQueued {

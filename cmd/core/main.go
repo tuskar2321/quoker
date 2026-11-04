@@ -26,12 +26,17 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/config"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
 	corelink "github.com/tuskar2321/quoker/internal/core/link"
 	"github.com/tuskar2321/quoker/internal/core/queue"
+	"github.com/tuskar2321/quoker/internal/core/results"
+	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
+	"github.com/tuskar2321/quoker/internal/core/targets"
+	"github.com/tuskar2321/quoker/internal/core/videos"
 	"github.com/tuskar2321/quoker/internal/shared/logging"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
@@ -128,11 +133,16 @@ func serve(cfg config.Config) error {
 
 	set := settings.New(st.DB(), nil)
 	q := queue.New(st, nil)
+	videosSvc := videos.New(st, q, nil)
+	botSvc := bot.New(st, set, nil)
+	targetsSvc := targets.New(st, nil)
+	sendsSvc := sends.New(st, q, videosSvc, targetsSvc, nil)
 
 	linkSrv := corelink.New(ctx, corelink.Deps{
 		Store:    st,
 		Queue:    q,
 		Settings: set,
+		Results:  results.New(videosSvc, sendsSvc),
 		Log:      log.With("component", "link"),
 	})
 	gs := grpc.NewServer()
@@ -156,6 +166,10 @@ func serve(cfg config.Config) error {
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Deps{
 			Accounts: accounts.New(st, nil, nil),
+			Bot:      botSvc,
+			Videos:   videosSvc,
+			Targets:  targetsSvc,
+			Sends:    sendsSvc,
 			Settings: set,
 			Ready:    st.Ready,
 			Log:      log,

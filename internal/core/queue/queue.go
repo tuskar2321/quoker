@@ -135,6 +135,21 @@ func (s *Store) db() *sql.DB { return s.st.DB() }
 // Enqueue inserts a task unless a queued/leased task with the same dedup_key
 // already exists, in which case it returns that task's ID and ErrDuplicate.
 func (s *Store) Enqueue(ctx context.Context, p EnqueueParams) (string, error) {
+	var id string
+	err := s.st.Tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = s.EnqueueTx(ctx, tx, p)
+		return err
+	})
+	if err != nil && !errors.Is(err, ErrDuplicate) {
+		return "", err
+	}
+	return id, err
+}
+
+// EnqueueTx is Enqueue inside the caller's transaction, so a task can be
+// created atomically with the domain row that references it.
+func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, p EnqueueParams) (string, error) {
 	if p.Priority == 0 {
 		p.Priority = defaultPriority(p.Kind)
 	}
@@ -146,40 +161,31 @@ func (s *Store) Enqueue(ctx context.Context, p EnqueueParams) (string, error) {
 	if notBefore.IsZero() {
 		notBefore = now
 	}
-
-	var id string
-	err := s.st.Tx(ctx, func(tx *sql.Tx) error {
-		if p.DedupKey != "" {
-			var existing string
-			err := tx.QueryRowContext(ctx,
-				`SELECT id FROM tasks WHERE dedup_key = ? AND status IN ('queued','leased')`,
-				p.DedupKey).Scan(&existing)
-			if err == nil {
-				id = existing
-				return ErrDuplicate
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("check dedup: %w", err)
-			}
+	if p.DedupKey != "" {
+		var existing string
+		err := tx.QueryRowContext(ctx,
+			`SELECT id FROM tasks WHERE dedup_key = ? AND status IN ('queued','leased')`,
+			p.DedupKey).Scan(&existing)
+		if err == nil {
+			return existing, ErrDuplicate
 		}
-		id = newULID(now)
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO tasks
-			 (id, kind, payload, status, priority, attempts, max_attempts, dedup_key,
-			  user_id, not_before, created_at, updated_at)
-			 VALUES (?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?, ?, ?)`,
-			id, string(p.Kind), p.Payload, p.Priority, p.MaxAttempts,
-			nullStr(p.DedupKey), nullInt64(p.UserID),
-			notBefore.UnixMilli(), now.UnixMilli(), now.UnixMilli())
-		if err != nil {
-			return fmt.Errorf("insert task: %w", err)
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("check dedup: %w", err)
 		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, ErrDuplicate) {
-		return "", err
 	}
-	return id, err
+	id := newULID(now)
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO tasks
+		 (id, kind, payload, status, priority, attempts, max_attempts, dedup_key,
+		  user_id, not_before, created_at, updated_at)
+		 VALUES (?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?, ?, ?)`,
+		id, string(p.Kind), p.Payload, p.Priority, p.MaxAttempts,
+		nullStr(p.DedupKey), nullInt64(p.UserID),
+		notBefore.UnixMilli(), now.UnixMilli(), now.UnixMilli())
+	if err != nil {
+		return "", fmt.Errorf("insert task: %w", err)
+	}
+	return id, nil
 }
 
 // ErrDuplicate is returned by Enqueue when a dedup key already has an active task.
@@ -413,9 +419,9 @@ func (s *Store) Get(ctx context.Context, id string) (*Task, error) {
 }
 
 // RecoverExpiredLeases re-queues leased tasks whose lease has expired and
-// whose attempt count is below max_attempts; otherwise marks them failed.
-// Should be called on a schedule (e.g. every 30 s).
-func (s *Store) RecoverExpiredLeases(ctx context.Context) (recovered, failed int, err error) {
+// whose attempt count is below max_attempts; otherwise marks them failed and
+// returns their IDs. Should be called on a schedule (e.g. every 30 s).
+func (s *Store) RecoverExpiredLeases(ctx context.Context) (recovered int, failed []string, err error) {
 	now := s.now()
 	return recovered, failed, s.st.Tx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
@@ -462,7 +468,7 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context) (recovered, failed int
 					 WHERE id = ?`, now.UnixMilli(), r.id); err != nil {
 					return fmt.Errorf("fail %s: %w", r.id, err)
 				}
-				failed++
+				failed = append(failed, r.id)
 			}
 		}
 		return nil

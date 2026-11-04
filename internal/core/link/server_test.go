@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,13 +20,41 @@ import (
 )
 
 type testFixture struct {
-	t      *testing.T
-	ctx    context.Context
-	cancel context.CancelFunc
-	srv    *Server
-	q      *queue.Store
-	stub   linkv1.LinkServiceClient
-	now    time.Time
+	t       *testing.T
+	ctx     context.Context
+	cancel  context.CancelFunc
+	srv     *Server
+	q       *queue.Store
+	stub    linkv1.LinkServiceClient
+	now     time.Time
+	results *fakeResults
+}
+
+// fakeResults records the calls the server makes to its ResultHandler.
+type fakeResults struct {
+	mu        sync.Mutex
+	succeeded []string
+	failed    []string
+}
+
+func (r *fakeResults) TaskSucceeded(_ context.Context, t *queue.Task, _ *linkv1.TaskResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.succeeded = append(r.succeeded, t.ID)
+	return nil
+}
+
+func (r *fakeResults) TaskFailed(_ context.Context, t *queue.Task) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failed = append(r.failed, t.ID)
+	return nil
+}
+
+func (r *fakeResults) snapshot() (succeeded, failed []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.succeeded...), append([]string(nil), r.failed...)
 }
 
 func newTestFixture(t *testing.T) *testFixture {
@@ -51,10 +80,12 @@ func newTestFixture(t *testing.T) *testFixture {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
+	results := &fakeResults{}
 	srv := New(ctx, Deps{
 		Store:    st,
 		Queue:    q,
 		Settings: settings.New(st.DB(), nowFn),
+		Results:  results,
 		Log:      log,
 		Now:      nowFn,
 	})
@@ -85,8 +116,9 @@ func newTestFixture(t *testing.T) *testFixture {
 	return &testFixture{
 		t: t, ctx: ctx, cancel: cancel,
 		srv: srv, q: q,
-		stub: linkv1.NewLinkServiceClient(cc),
-		now:  now,
+		stub:    linkv1.NewLinkServiceClient(cc),
+		now:     now,
+		results: results,
 	}
 }
 
@@ -183,11 +215,54 @@ func TestTaskDispatch(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got.Status == queue.StatusDone {
+			var res linkv1.ResolveResult
+			if err := unmarshalProto(got.Result, &res); err != nil || res.NativeId != "1" {
+				t.Fatalf("stored result = %v, err = %v", &res, err)
+			}
+			if ok, _ := f.results.snapshot(); len(ok) != 1 || ok[0] != taskID {
+				t.Fatalf("TaskSucceeded calls = %v", ok)
+			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("task not completed within deadline")
+}
+
+func TestTaskFinalFailureNotifies(t *testing.T) {
+	f := newTestFixture(t)
+	payload, err := marshalProto(&linkv1.SendVideoTask{VideoId: "tiktok:1", ChatId: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := f.q.Enqueue(f.ctx, queue.EnqueueParams{Kind: queue.KindSendVideo, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := f.connect("worker-1")
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&linkv1.WorkerMessage{
+		Msg: &linkv1.WorkerMessage_TaskResult{TaskResult: &linkv1.TaskResult{
+			TaskId: taskID,
+			Result: &linkv1.TaskResult_Error{Error: &linkv1.TaskError{Code: "target_forbidden"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ok, failed := f.results.snapshot()
+		if len(failed) == 1 && failed[0] == taskID {
+			if len(ok) != 0 {
+				t.Fatalf("unexpected TaskSucceeded calls: %v", ok)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("TaskFailed not called within deadline")
 }
 
 func TestUnknownWorker(t *testing.T) {

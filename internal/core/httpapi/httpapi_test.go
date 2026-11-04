@@ -16,8 +16,12 @@ import (
 	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/queue"
+	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
+	"github.com/tuskar2321/quoker/internal/core/targets"
+	"github.com/tuskar2321/quoker/internal/core/videos"
 )
 
 const deviceID = "3f0c2b9e-8a41-4c7d-9b1e-2a6f5d4c3b21"
@@ -25,7 +29,9 @@ const deviceID = "3f0c2b9e-8a41-4c7d-9b1e-2a6f5d4c3b21"
 type env struct {
 	t        *testing.T
 	srv      *httptest.Server
+	st       *store.Store
 	acc      *accounts.Service
+	targets  *targets.Service
 	settings *settings.Store
 	now      time.Time
 }
@@ -37,12 +43,18 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	e := &env{t: t, now: time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)}
+	e := &env{t: t, st: st, now: time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)}
 	clock := func() time.Time { return e.now }
 	e.acc = accounts.New(st, clock, nil)
 	e.settings = settings.New(st.DB(), clock)
+	e.targets = targets.New(st, clock)
+	q := queue.New(st, clock)
+	vids := videos.New(st, q, clock)
 	h := New(Deps{
 		Accounts: e.acc,
+		Videos:   vids,
+		Targets:  e.targets,
+		Sends:    sends.New(st, q, vids, e.targets, clock),
 		Settings: e.settings,
 		Ready:    st.Ready,
 		Log:      slog.New(slog.NewJSONHandler(io.Discard, nil)),
