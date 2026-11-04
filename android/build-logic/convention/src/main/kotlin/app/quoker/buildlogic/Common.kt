@@ -13,10 +13,10 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 internal object QuokerSdk {
-    const val COMPILE = 36
-    const val TARGET = 36
+    const val COMPILE = 37
+    const val TARGET = 37
     const val MIN = 26
-    const val BUILD_TOOLS = "36.1.0"
+    const val BUILD_TOOLS = "37.0.0"
     val JAVA = JavaVersion.VERSION_17
     val JVM_TARGET = JvmTarget.JVM_17
 }
