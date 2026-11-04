@@ -156,3 +156,39 @@ func readyBefore(ctx context.Context, tx *sql.Tx, cutoff time.Time) ([]string, e
 	}
 	return ids, rows.Err()
 }
+
+// HasReady reports whether a task is ready to lease. It is a plain read, so
+// idle dispatch loops do not take SQLite's write lock (Lease does).
+func (s *Store) HasReady(ctx context.Context) (bool, error) {
+	var one int
+	err := s.db().QueryRowContext(ctx,
+		`SELECT 1 FROM tasks WHERE status = 'queued' AND not_before <= ? LIMIT 1`, s.now().UnixMilli()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check ready tasks: %w", err)
+	}
+	return true, nil
+}
+
+// PurgeFinished deletes done, failed and cancelled tasks last updated before
+// cutoff. Sends keep their own status; their task_id link is cleared first.
+func (s *Store) PurgeFinished(ctx context.Context, cutoff time.Time) (int64, error) {
+	var n int64
+	err := s.st.Tx(ctx, func(tx *sql.Tx) error {
+		const old = `SELECT id FROM tasks WHERE status IN ('done', 'failed', 'cancelled') AND updated_at < ?`
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE sends SET task_id = NULL WHERE task_id IN (`+old+`)`, cutoff.UnixMilli()); err != nil {
+			return fmt.Errorf("unlink sends: %w", err)
+		}
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM tasks WHERE status IN ('done', 'failed', 'cancelled') AND updated_at < ?`, cutoff.UnixMilli())
+		if err != nil {
+			return fmt.Errorf("purge tasks: %w", err)
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
+	return n, err
+}

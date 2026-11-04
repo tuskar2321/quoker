@@ -314,3 +314,16 @@ func TestBotCall_downloadFile(t *testing.T) {
 		t.Fatalf("res = %v, err = %v", res, err)
 	}
 }
+
+// TestSendVideo_floodWaitReachesCore: Telegram's retry_after travels with the
+// error so the core does not retry too early (REVIEW M16).
+func TestSendVideo_floodWaitReachesCore(t *testing.T) {
+	e := newEnv(t, ytdlptest.Scenario{InfoJSON: tiktokInfo})
+	e.fake.tgStatus = 429
+	e.fake.tgBody = `{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 31","parameters":{"retry_after":31}}`
+	_, err := e.h.SendVideo(context.Background(), &linkv1.SendVideoTask{VideoId: "tiktok:42", Url: "u", ChatId: 1}, e.cfg, noProgress)
+	te := assertCode(t, err, errs.RateLimited)
+	if te.RetryAfterS != 31 || !te.Retryable {
+		t.Fatalf("task error = %+v", te)
+	}
+}

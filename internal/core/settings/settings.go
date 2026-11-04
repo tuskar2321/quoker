@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
 // Key is a known settings key.
@@ -65,6 +67,9 @@ func (s *Store) Get(ctx context.Context, key Key) (string, bool, error) {
 
 // Set stores value under key.
 func (s *Store) Set(ctx context.Context, key Key, value string) error {
+	if err := validate(key, value); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
 		 ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
@@ -86,4 +91,21 @@ func (s *Store) Int(ctx context.Context, key Key, def int64) (int64, error) {
 		return def, fmt.Errorf("setting %s is not an integer: %w", key, err)
 	}
 	return n, nil
+}
+
+// validate rejects values that would break readers: a non-numeric
+// min_supported_version_code fails every versioned request with 500, a
+// broken admin_chat_id silently stops alerts.
+func validate(key Key, value string) error {
+	switch key {
+	case MinSupportedVersionCode:
+		if n, err := strconv.ParseInt(value, 10, 64); err != nil || n < 0 {
+			return errs.New(errs.InvalidRequest, fmt.Sprintf("%s must be a non-negative integer, got %q", key, value))
+		}
+	case AdminChatID:
+		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+			return errs.New(errs.InvalidRequest, fmt.Sprintf("%s must be a Telegram chat id, got %q", key, value))
+		}
+	}
+	return nil
 }

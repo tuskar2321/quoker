@@ -469,3 +469,20 @@ func TestBuildCaption_truncation(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildCaption_emojiCountsTwice: Telegram measures captions in UTF-16,
+// where an emoji outside the BMP is two units (REVIEW M14).
+func TestBuildCaption_emojiCountsTwice(t *testing.T) {
+	vid := &videos.Video{CanonicalURL: "https://x"}
+	caption := strings.Repeat("😀", 600) // 600 characters, 1200 units
+	got := sends.BuildCaption(&caption, vid, targets.Target{Type: "channel"}, false, "", "")
+	if n := sends.CaptionLen(got); n != 1024 {
+		t.Fatalf("caption is %d UTF-16 units, want 1024", n)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("truncation split a character")
+	}
+	if utf8.RuneCountInString(got) != 512 {
+		t.Fatalf("kept %d emoji, want 512", utf8.RuneCountInString(got))
+	}
+}

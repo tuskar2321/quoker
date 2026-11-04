@@ -3,7 +3,6 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -65,7 +64,7 @@ func (s *server) createSend(w http.ResponseWriter, r *http.Request) {
 	case req.TargetID <= 0:
 		writeError(w, r, errs.New(errs.InvalidRequest, "target_id is required"))
 		return
-	case req.Caption != nil && utf8.RuneCountInString(*req.Caption) > sends.CaptionMaxRunes:
+	case req.Caption != nil && sends.CaptionLen(*req.Caption) > sends.CaptionMaxLen:
 		writeError(w, r, errs.New(errs.InvalidRequest, "caption too long"))
 		return
 	}
@@ -80,8 +79,16 @@ func (s *server) createSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errs.New(errs.TelegramNotLinked, "telegram is not linked"))
 		return
 	}
-	if ok, retry := s.sendLimit.Allow(strconv.FormatInt(p.UserID, 10)); !ok {
-		writeRateLimited(w, r, retry)
+	// A retry with the same key gets the send it already made and does not
+	// spend the limit.
+	if existing, err := s.sends.ByIdempotencyKey(r.Context(), p.UserID, key); err == nil {
+		writeJSON(w, http.StatusAccepted, sendResponse{toSendDTO(existing)})
+		return
+	} else if !errs.Is(err, errs.NotFound) {
+		writeError(w, r, err)
+		return
+	}
+	if overLimit(w, r, s.sendLimit, p.UserID, "") {
 		return
 	}
 

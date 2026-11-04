@@ -34,6 +34,11 @@ const (
 	jitter = 0.2
 	// maxOutbox bounds results waiting for a reconnect.
 	maxOutbox = 100
+	// defaultDrain is how long running tasks may finish after a stop signal
+	// (docs/04, docs/11); cancelResultsGrace lets the cancelled ones report.
+	defaultDrain       = 30 * time.Second
+	cancelResultsGrace = 5 * time.Second
+	closeGrace         = 2 * time.Second
 )
 
 // TaskHandler is called for each task dispatched by the core.
@@ -62,6 +67,9 @@ type Config struct {
 	Handler TaskHandler
 	// OnBotUpdateAck, when set, receives update ids the core has processed.
 	OnBotUpdateAck func(updateID int64)
+	// Drain is how long running tasks may finish after Run's context ends;
+	// zero means 30 s.
+	Drain time.Duration
 }
 
 // ErrNotConnected is returned when there is no live stream to the core.
@@ -79,12 +87,14 @@ type Client struct {
 	log *slog.Logger
 	now func() time.Time
 
-	mu     sync.Mutex
-	sc     *streamConn    // writer of the live stream, nil when disconnected
-	cfgV   *linkv1.Config // last received Config from core
-	tasks  map[string]context.CancelFunc
-	outbox []*linkv1.TaskResult
-	wg     sync.WaitGroup
+	mu       sync.Mutex
+	sc       *streamConn    // writer of the live stream, nil when disconnected
+	cfgV     *linkv1.Config // last received Config from core
+	tasks    map[string]context.CancelFunc
+	outbox   []*linkv1.TaskResult
+	wg       sync.WaitGroup
+	taskCtx  context.Context // parent of task contexts; outlives the stop signal
+	draining bool
 }
 
 // New creates a Client. Call Run to start connecting.
@@ -95,7 +105,10 @@ func New(cfg Config, log *slog.Logger, now func() time.Time) *Client {
 	if cfg.MaxParallel <= 0 {
 		cfg.MaxParallel = 2
 	}
-	return &Client{cfg: cfg, log: log, now: now, tasks: map[string]context.CancelFunc{}}
+	if cfg.Drain <= 0 {
+		cfg.Drain = defaultDrain
+	}
+	return &Client{cfg: cfg, log: log, now: now, tasks: map[string]context.CancelFunc{}, taskCtx: context.Background()}
 }
 
 // CoreConfig returns the last Config received from the core. May be nil if
@@ -180,9 +193,28 @@ func (c *Client) flushOutbox(sc *streamConn) {
 
 // Run connects to the core and handles messages until ctx is cancelled. It
 // reconnects with exponential backoff, and stops for good once revoked.
-// Running tasks are cancelled when ctx ends.
-func (c *Client) Run(ctx context.Context) {
+// When ctx ends it stops taking tasks, lets running ones finish for up to
+// Config.Drain while the stream stays up to carry their results, then
+// cancels the rest and returns.
+func (c *Client) Run(stop context.Context) {
+	ctx, closeStream := context.WithCancel(context.WithoutCancel(stop))
+	defer closeStream()
+	taskCtx, cancelTasks := context.WithCancel(context.WithoutCancel(stop))
+	defer cancelTasks()
+	c.mu.Lock()
+	c.taskCtx = taskCtx
+	c.mu.Unlock()
+	go func() {
+		select {
+		case <-stop.Done():
+		case <-ctx.Done():
+			return
+		}
+		c.drain(cancelTasks)
+		closeStream()
+	}()
 	defer c.wg.Wait()
+
 	attempts := 0
 	for {
 		if ctx.Err() != nil {
@@ -230,7 +262,9 @@ func (c *Client) connect(ctx context.Context) (healthy bool, err error) {
 	}
 	defer func() { _ = cc.Close() }()
 
-	streamCtx, cancel := context.WithCancel(ctx)
+	// Not derived from ctx: on stop the stream is closed gracefully (CloseSend,
+	// then wait for the core) so the last results are not cut off.
+	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	// Inject cert headers for the server's cert verification (dev/test mode).
 	// In production Caddy injects these from the mTLS handshake.
@@ -261,6 +295,12 @@ func (sc *streamConn) send(m *linkv1.WorkerMessage) error {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.stream.Send(m)
+}
+
+func (sc *streamConn) closeSend() error {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.stream.CloseSend()
 }
 
 func (sc *streamConn) sendResult(r *linkv1.TaskResult) error {
@@ -306,7 +346,20 @@ func (c *Client) runStream(ctx, streamCtx context.Context, stream linkv1.LinkSer
 	for {
 		select {
 		case <-ctx.Done():
-			return healthy, nil
+			// Half-close and let the core read everything we sent; it ends
+			// the stream when it sees EOF.
+			_ = sc.closeSend()
+			grace := time.After(closeGrace)
+			for {
+				select {
+				case r := <-recvCh:
+					if r.err != nil {
+						return healthy, nil
+					}
+				case <-grace:
+					return healthy, nil
+				}
+			}
 
 		case <-watchdog.C:
 			if c.now().Sub(lastHeard) > silenceTimeout {
@@ -339,7 +392,7 @@ func (c *Client) runStream(ctx, streamCtx context.Context, stream linkv1.LinkSer
 				}
 
 			case *linkv1.CoreMessage_Task:
-				c.startTask(ctx, v.Task, sc)
+				c.startTask(v.Task, sc)
 
 			case *linkv1.CoreMessage_CancelTask:
 				c.mu.Lock()
@@ -369,22 +422,22 @@ func (c *Client) runStream(ctx, streamCtx context.Context, stream linkv1.LinkSer
 
 // startTask runs a dispatched task unless it is already running here (the
 // core requeued it while we were disconnected) or all slots are busy.
-func (c *Client) startTask(ctx context.Context, task *linkv1.Task, sc *streamConn) {
+func (c *Client) startTask(task *linkv1.Task, sc *streamConn) {
 	c.mu.Lock()
 	if _, running := c.tasks[task.TaskId]; running {
 		c.mu.Unlock()
 		c.log.Info("task already running here", "task_id", task.TaskId)
 		return
 	}
-	if len(c.tasks) >= int(c.cfg.MaxParallel) {
+	if c.draining || len(c.tasks) >= int(c.cfg.MaxParallel) {
 		c.mu.Unlock()
-		c.log.Warn("all slots busy, task returned", "task_id", task.TaskId)
+		c.log.Warn("not taking the task (busy or stopping), returned to the core", "task_id", task.TaskId)
 		_ = sc.sendResult(&linkv1.TaskResult{TaskId: task.TaskId, Result: &linkv1.TaskResult_Error{
 			Error: &linkv1.TaskError{Code: "internal", Message: "worker busy", Retryable: true},
 		}})
 		return
 	}
-	tCtx, cancel := context.WithCancel(ctx)
+	tCtx, cancel := context.WithCancel(c.taskCtx)
 	c.tasks[task.TaskId] = cancel
 	c.wg.Add(1)
 	c.mu.Unlock()
@@ -400,6 +453,49 @@ func (c *Client) startTask(ctx context.Context, task *linkv1.Task, sc *streamCon
 			c.log.Warn("task error", "task_id", task.TaskId, "err", err)
 		}
 	}()
+}
+
+// drain refuses new tasks, waits for running ones up to Config.Drain, then
+// cancels what is left and gives their "cancelled" results a moment to go out.
+func (c *Client) drain(cancelTasks context.CancelFunc) {
+	c.mu.Lock()
+	c.draining = true
+	n := len(c.tasks)
+	c.mu.Unlock()
+	if n > 0 {
+		c.log.Info("stopping: letting running tasks finish", "tasks", n, "within", c.cfg.Drain)
+	}
+	if !waitTimeout(&c.wg, c.cfg.Drain) {
+		c.log.Warn("stopping: cancelling unfinished tasks", "tasks", c.running())
+		cancelTasks()
+		waitTimeout(&c.wg, cancelResultsGrace)
+	}
+	c.flushWait(cancelResultsGrace)
+}
+
+// flushWait gives results kept in the outbox a chance to reach the core.
+func (c *Client) flushWait(d time.Duration) {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		pending := len(c.outbox)
+		c.mu.Unlock()
+		if pending == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func waitTimeout(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 
 func (c *Client) running() int {

@@ -102,7 +102,7 @@ func TestMetadata_cookiesRetry(t *testing.T) {
 func TestDownload(t *testing.T) {
 	r, calls := runner(t, ytdlptest.Scenario{FileBytes: map[string]int{"h264_720": 2048}})
 	dir := t.TempDir()
-	path, err := r.Download(context.Background(), "https://www.tiktok.com/@a/video/42", "h264_720", dir, "")
+	path, err := r.Download(context.Background(), "https://www.tiktok.com/@a/video/42", "h264_720", dir, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,5 +178,22 @@ func TestNextHeight(t *testing.T) {
 		if got := ytdlp.NextHeight(in); got != want {
 			t.Errorf("NextHeight(%d) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// TestDownload_maxFilesize: an oversized format is refused by yt-dlp instead
+// of being downloaded whole (REVIEW M20).
+func TestDownload_maxFilesize(t *testing.T) {
+	r, calls := runner(t, ytdlptest.Scenario{FileBytes: map[string]int{"big": 5000}})
+	dir := t.TempDir()
+	_, err := r.Download(context.Background(), "https://www.tiktok.com/@a/video/42", "big", dir, "", 1000)
+	if !errs.Is(err, errs.TooLarge) {
+		t.Fatalf("err = %v, want too_large", err)
+	}
+	if args := calls()[0]; args[slices.Index(args, "--max-filesize")+1] != "1000" {
+		t.Fatalf("args = %v", args)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("oversized file was written: %v", entries)
 	}
 }

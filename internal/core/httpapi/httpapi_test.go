@@ -41,6 +41,7 @@ type env struct {
 	files    *files.Store
 	queue    *queue.Store
 	releases *releases.Store
+	handler  *server
 	settings *settings.Store
 	now      time.Time
 }
@@ -64,7 +65,7 @@ func newEnv(t *testing.T) *env {
 	if e.files, err = files.New(st, t.TempDir(), 1<<30, clock, nil); err != nil {
 		t.Fatal(err)
 	}
-	h := New(Deps{
+	state, h := build(Deps{
 		Accounts: e.acc,
 		Videos:   vids,
 		Targets:  e.targets,
@@ -83,6 +84,7 @@ func newEnv(t *testing.T) *env {
 		Log:      slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		Now:      clock,
 	})
+	e.handler = state
 	e.srv = httptest.NewServer(h)
 	t.Cleanup(e.srv.Close)
 	return e
@@ -405,3 +407,10 @@ type noLink struct{}
 func (noLink) ConnectedWorkers() []string                     { return nil }
 func (noLink) BroadcastConfig(context.Context) error          { return nil }
 func (noLink) Shutdown(context.Context, string, string) error { return nil }
+
+// refreshIdle reports whether no target re-check runs for the user.
+func (e *env) refreshIdle(userID int64) bool {
+	e.handler.refreshing.mu.Lock()
+	defer e.handler.refreshing.mu.Unlock()
+	return !e.handler.refreshing.running[userID]
+}

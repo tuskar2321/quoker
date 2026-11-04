@@ -71,7 +71,8 @@ func taskError(err error) error {
 		return &runner.TaskError{
 			Code: string(code), Message: te.Error(), Retryable: code.Retryable(),
 			TelegramCode: int32(te.Status), TelegramDescription: te.Description, //nolint:gosec // HTTP-like status
-			Cause: err,
+			RetryAfterS: int32(min(te.RetryAfter, 3600)), //nolint:gosec // bounded
+			Cause:       err,
 		}
 	}
 	var de *errs.Error

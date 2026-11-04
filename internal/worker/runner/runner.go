@@ -188,6 +188,8 @@ type TaskError struct {
 	// Raw Bot API error, when the failure came from Telegram.
 	TelegramCode        int32
 	TelegramDescription string
+	// RetryAfterS asks the core to wait at least this long before a retry.
+	RetryAfterS int32
 	// Cause is the underlying error; it is logged but never sent to the core.
 	Cause error
 }
@@ -222,6 +224,7 @@ func toTaskError(err error) *linkv1.TaskError {
 			Retryable:           te.Retryable,
 			TelegramErrorCode:   te.TelegramCode,
 			TelegramDescription: te.TelegramDescription,
+			RetryAfterS:         te.RetryAfterS,
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

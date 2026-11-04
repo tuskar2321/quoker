@@ -32,6 +32,9 @@ const (
 	registerPerHour = 5
 	// sendsPerHour is the send limit per user.
 	sendsPerHour = 30
+	// resolvesPerHour is the resolve limit per user (docs/03): every miss is
+	// a request to TikTok or Instagram from the worker's IP.
+	resolvesPerHour = 30
 	// streamsPerSession caps parallel file downloads (docs/03-public-api.md).
 	streamsPerSession = 2
 	// apiTimeout bounds JSON endpoints; file streaming gets its own limits.
@@ -53,7 +56,7 @@ type Deps struct {
 	// Trusted are the proxies whose X-Forwarded-For is believed.
 	Trusted  proxy.Trusted
 	Admin    *admin.Service
-	Store    *store.Store // read-only queries for admin status
+	Store    *store.Store // rate limit counters, admin status queries
 	Settings *settings.Store
 	Version  string                      // core build version
 	Ready    func(context.Context) error // /readyz probe
@@ -62,29 +65,38 @@ type Deps struct {
 }
 
 type server struct {
-	acc       *accounts.Service
-	bot       *bot.Service
-	videos    *videos.Service
-	targets   *targets.Service
-	sends     *sends.Service
-	files     *files.Store
-	history   *history.Service
-	releases  *releases.Store
-	publicURL string
-	trusted   proxy.Trusted
-	admin     *admin.Service
-	st        *store.Store
-	version   string
-	settings  *settings.Store
-	ready     func(context.Context) error
-	now       func() time.Time
-	register  *ratelimit.Memory
-	sendLimit *ratelimit.Memory
-	streams   *streamLimiter
+	acc          *accounts.Service
+	bot          *bot.Service
+	videos       *videos.Service
+	targets      *targets.Service
+	sends        *sends.Service
+	files        *files.Store
+	history      *history.Service
+	releases     *releases.Store
+	publicURL    string
+	trusted      proxy.Trusted
+	admin        *admin.Service
+	st           *store.Store
+	version      string
+	settings     *settings.Store
+	ready        func(context.Context) error
+	now          func() time.Time
+	register     *ratelimit.Limiter
+	sendLimit    *ratelimit.Limiter
+	resolveLimit *ratelimit.Limiter
+	refreshLimit *ratelimit.Limiter
+	refreshing   *inFlight
+	streams      *streamLimiter
 }
 
 // New builds the HTTP handler of the public API.
 func New(d Deps) http.Handler {
+	_, h := build(d)
+	return h
+}
+
+// build returns the handler and its state, which tests inspect.
+func build(d Deps) (*server, http.Handler) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
@@ -105,9 +117,14 @@ func New(d Deps) http.Handler {
 		settings:  d.Settings,
 		ready:     d.Ready,
 		now:       d.Now,
-		register:  ratelimit.NewMemory(registerPerHour, time.Hour, d.Now),
-		sendLimit: ratelimit.NewMemory(sendsPerHour, time.Hour, d.Now),
-		streams:   newStreamLimiter(streamsPerSession),
+		register:  ratelimit.New(d.Store, "register", registerPerHour, time.Hour, d.Now),
+		sendLimit: ratelimit.New(d.Store, "send", sendsPerHour, time.Hour, d.Now),
+		// One target re-check per user per minute: each one is a
+		// getChatMember per target, all on the bot's shared Telegram quota.
+		resolveLimit: ratelimit.New(d.Store, "resolve", resolvesPerHour, time.Hour, d.Now),
+		refreshLimit: ratelimit.New(d.Store, "refresh", 1, time.Minute, d.Now),
+		refreshing:   &inFlight{running: map[int64]bool{}},
+		streams:      newStreamLimiter(streamsPerSession),
 	}
 
 	r := chi.NewRouter()
@@ -179,7 +196,7 @@ func New(d Deps) http.Handler {
 			})
 		})
 	})
-	return r
+	return s, r
 }
 
 func (s *server) readyz(w http.ResponseWriter, r *http.Request) {

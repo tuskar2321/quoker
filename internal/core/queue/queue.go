@@ -303,7 +303,13 @@ type CompleteParams struct {
 	ErrCode   string // empty on success
 	ErrMsg    string
 	Retryable bool
+	// RetryAfter, when longer than the backoff, delays the retry (Telegram's
+	// retry_after on 429). Capped at maxRetryAfter.
+	RetryAfter time.Duration
 }
+
+// maxRetryAfter bounds a retry delay requested by the worker.
+const maxRetryAfter = time.Hour
 
 // Complete marks a task done or failed (with retry if applicable).
 func (s *Store) Complete(ctx context.Context, p CompleteParams) error {
@@ -331,8 +337,11 @@ func (s *Store) Complete(ctx context.Context, p CompleteParams) error {
 				p.Result, now.UnixMilli(), p.TaskID)
 		} else if p.Retryable && attempts < maxAttempts {
 			// Retry with exponential backoff: 2^(attempts-1) * 5s.
-			backoff := (1 << (attempts - 1)) * 5 * int(time.Second)
-			notBefore := now.Add(time.Duration(backoff))
+			delay := time.Duration((1 << (attempts - 1)) * 5 * int(time.Second))
+			if wait := min(p.RetryAfter, maxRetryAfter); wait > delay {
+				delay = wait
+			}
+			notBefore := now.Add(delay)
 			_, err = tx.ExecContext(ctx,
 				`UPDATE tasks SET status = 'queued', worker_id = NULL, lease_until = NULL,
 				 error_code = ?, error_message = ?, not_before = ?, updated_at = ?

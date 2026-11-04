@@ -173,7 +173,10 @@ func (h *Handlers) download(ctx context.Context, videoID, url, cookies, variant 
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	path, err := h.d.YtDlp.Download(ctx, url, c.Selector, dir, cookies)
+	path, err := h.d.YtDlp.Download(ctx, url, c.Selector, dir, cookies, maxBytes)
+	if errs.Is(err, errs.TooLarge) {
+		return nil, maxBytes + 1, nil // too big: the ladder tries a lower resolution
+	}
 	if err != nil {
 		return nil, 0, err
 	}

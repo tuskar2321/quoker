@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,11 @@ func Run(args []string) int {
 	size, ok := sc.FileBytes[value(args, "-f")]
 	if !ok {
 		size = 1024
+	}
+	if limit, err := strconv.Atoi(value(args, "--max-filesize")); err == nil && size > limit {
+		// What yt-dlp prints when it skips an oversized format; exit code 0.
+		fmt.Printf("[download] File is larger than max-filesize (%d bytes > %d bytes). Aborting.\n", size, limit)
+		return 0
 	}
 	if err := os.WriteFile(out, make([]byte, size), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)

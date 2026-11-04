@@ -41,8 +41,7 @@ func toMe(u accounts.User) meDTO {
 func (s *server) registerUser(w http.ResponseWriter, r *http.Request) {
 	// Every attempt counts, successful or not: the limit guards invite codes
 	// against guessing.
-	if ok, retry := s.register.Allow(clientIP(r, s.trusted)); !ok {
-		writeRateLimited(w, r, retry)
+	if overLimit(w, r, s.register, 0, clientIP(r, s.trusted)) {
 		return
 	}
 	var req struct {

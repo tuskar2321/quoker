@@ -223,12 +223,26 @@ func (s *Service) SetStatus(ctx context.Context, chatID int64, status Status, re
 }
 
 // UpdateChatID replaces chat_id across all targets (group → supergroup migration).
+// Owners who already have a target for the new chat (they ran /connect
+// there before the migration message arrived) keep that one; their old
+// target cannot be deleted because sends refer to it, so it is switched off.
 func (s *Service) UpdateChatID(ctx context.Context, oldChatID, newChatID int64) error {
-	now := s.now()
-	_, err := s.st.DB().ExecContext(ctx,
-		`UPDATE targets SET chat_id = ?, updated_at = ? WHERE chat_id = ?`,
-		newChatID, now.UnixMilli(), oldChatID)
-	return err
+	now := s.now().UnixMilli()
+	return s.st.Tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE targets SET status = 'inactive', inactive_reason = 'bot_removed', updated_at = ?
+			 WHERE chat_id = ? AND owner_user_id IN (SELECT owner_user_id FROM targets WHERE chat_id = ?)`,
+			now, oldChatID, newChatID); err != nil {
+			return fmt.Errorf("retire duplicate targets: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE targets SET chat_id = ?, updated_at = ?
+			 WHERE chat_id = ? AND owner_user_id NOT IN (SELECT owner_user_id FROM targets WHERE chat_id = ?)`,
+			newChatID, now, oldChatID, newChatID); err != nil {
+			return fmt.Errorf("move targets to the new chat: %w", err)
+		}
+		return nil
+	})
 }
 
 // UpdateTitle updates the title of targets with the given chat_id.

@@ -61,6 +61,8 @@ message TaskError {
   // Raw Telegram error when the failure came from Bot API.
   int32 telegram_error_code = 4;
   string telegram_description = 5;
+  // Minimum delay before a retry, e.g. Telegram's retry_after on 429; 0 if none.
+  int32 retry_after_s = 6;
 }
 
 message ResolveResult {

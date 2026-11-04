@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/tuskar2321/quoker/internal/core/ratelimit"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
@@ -105,6 +106,21 @@ func publicCode(c errs.Code) errs.Code {
 func toErrorDTO(c errs.Code) errorDTO {
 	c = publicCode(c)
 	return errorDTO{Code: c, Message: messageOf[c], Retryable: c.Retryable()}
+}
+
+// overLimit records a request against l and, when it is over the limit or
+// the counter fails, writes the response; the handler then stops.
+func overLimit(w http.ResponseWriter, r *http.Request, l *ratelimit.Limiter, userID int64, scope string) bool {
+	ok, retry, err := l.Allow(r.Context(), userID, scope)
+	switch {
+	case err != nil:
+		writeError(w, r, err)
+		return true
+	case !ok:
+		writeRateLimited(w, r, retry)
+		return true
+	}
+	return false
 }
 
 func writeRateLimited(w http.ResponseWriter, r *http.Request, retryAfter time.Duration) {

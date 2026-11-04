@@ -10,7 +10,7 @@ import (
 	"html"
 	"strings"
 	"time"
-	"unicode/utf8"
+	"unicode/utf16"
 
 	"google.golang.org/protobuf/proto"
 
@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	// CaptionMaxRunes is the Telegram caption limit in characters.
-	CaptionMaxRunes = 1024
+	// CaptionMaxLen is the Telegram caption limit, counted like Telegram
+	// does: in UTF-16 code units (an emoji outside the BMP takes two).
+	CaptionMaxLen = 1024
 	// MaxSendBytes is the cloud Bot API upload limit (docs/11-nfr-security.md).
 	MaxSendBytes  = 50 << 20
 	signaturePref = "\nот "
@@ -175,6 +176,11 @@ func (s *Service) Get(ctx context.Context, userID, sendID int64) (*Send, error) 
 		selectSend+` WHERE s.id = ? AND s.user_id = ?`, sendID, userID))
 }
 
+// ByIdempotencyKey returns the user's send made with key.
+func (s *Service) ByIdempotencyKey(ctx context.Context, userID int64, key string) (*Send, error) {
+	return s.getByIdempotencyKey(ctx, userID, key)
+}
+
 func (s *Service) getByIdempotencyKey(ctx context.Context, userID int64, key string) (*Send, error) {
 	return scanSend(s.st.DB().QueryRowContext(ctx,
 		selectSend+` WHERE s.user_id = ? AND s.idempotency_key = ?`, userID, key))
@@ -313,18 +319,32 @@ func BuildCaption(caption *string, vid *videos.Video, tgt targets.Target, signAs
 	}
 	// Truncate before escaping: the limit counts visible characters, and
 	// cutting escaped text could split an entity like "&amp;".
-	body := truncateRunes(text, CaptionMaxRunes-utf8.RuneCountInString(sig))
+	body := truncateUTF16(text, CaptionMaxLen-CaptionLen(sig))
 	return html.EscapeString(body) + html.EscapeString(sig)
 }
 
-func truncateRunes(s string, n int) string {
+// CaptionLen is the length of s as Telegram counts it (UTF-16 code units).
+func CaptionLen(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
+// truncateUTF16 keeps the longest prefix of s within n UTF-16 code units,
+// never splitting a character.
+func truncateUTF16(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(s) <= n {
-		return s
+	used := 0
+	for i, r := range s {
+		if used += utf16.RuneLen(r); used > n {
+			return s[:i]
+		}
 	}
-	return string([]rune(s)[:n])
+	return s
 }
 
 func nullStr(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }

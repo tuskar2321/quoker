@@ -33,8 +33,8 @@ func TestOpenMigratesAndIsIdempotent(t *testing.T) {
 	if err := s.DB().QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("user_version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("user_version = %d, want 3", version)
 	}
 
 	tables := []string{"users", "invites", "sessions", "link_tokens", "targets", "videos",

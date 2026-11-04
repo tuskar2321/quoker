@@ -480,8 +480,10 @@ type TaskError struct {
 	// Raw Telegram error when the failure came from Bot API.
 	TelegramErrorCode   int32  `protobuf:"varint,4,opt,name=telegram_error_code,json=telegramErrorCode,proto3" json:"telegram_error_code,omitempty"`
 	TelegramDescription string `protobuf:"bytes,5,opt,name=telegram_description,json=telegramDescription,proto3" json:"telegram_description,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Minimum delay before a retry, e.g. Telegram's retry_after on 429; 0 if none.
+	RetryAfterS   int32 `protobuf:"varint,6,opt,name=retry_after_s,json=retryAfterS,proto3" json:"retry_after_s,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TaskError) Reset() {
@@ -547,6 +549,13 @@ func (x *TaskError) GetTelegramDescription() string {
 		return x.TelegramDescription
 	}
 	return ""
+}
+
+func (x *TaskError) GetRetryAfterS() int32 {
+	if x != nil {
+		return x.RetryAfterS
+	}
+	return 0
 }
 
 type ResolveResult struct {
@@ -1722,13 +1731,14 @@ const file_quoker_link_v1_link_proto_rawDesc = "" +
 	"send_video\x18\x04 \x01(\v2\x1f.quoker.link.v1.SendVideoResultH\x00R\tsendVideo\x12:\n" +
 	"\bbot_call\x18\x05 \x01(\v2\x1d.quoker.link.v1.BotCallResultH\x00R\abotCall\x121\n" +
 	"\x05error\x18\x0f \x01(\v2\x19.quoker.link.v1.TaskErrorH\x00R\x05errorB\b\n" +
-	"\x06result\"\xba\x01\n" +
+	"\x06result\"\xde\x01\n" +
 	"\tTaskError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1c\n" +
 	"\tretryable\x18\x03 \x01(\bR\tretryable\x12.\n" +
 	"\x13telegram_error_code\x18\x04 \x01(\x05R\x11telegramErrorCode\x121\n" +
-	"\x14telegram_description\x18\x05 \x01(\tR\x13telegramDescription\"\x80\x03\n" +
+	"\x14telegram_description\x18\x05 \x01(\tR\x13telegramDescription\x12\"\n" +
+	"\rretry_after_s\x18\x06 \x01(\x05R\vretryAfterS\"\x80\x03\n" +
 	"\rResolveResult\x12\x1a\n" +
 	"\bplatform\x18\x01 \x01(\tR\bplatform\x12\x1b\n" +
 	"\tnative_id\x18\x02 \x01(\tR\bnativeId\x12#\n" +

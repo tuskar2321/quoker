@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,8 +75,9 @@ func (r *Runner) Metadata(ctx context.Context, rawURL, cookies string) (*Info, e
 }
 
 // Download fetches the formats chosen by selector into dir and returns the
-// path of the resulting file.
-func (r *Runner) Download(ctx context.Context, rawURL, selector, dir, cookies string) (string, error) {
+// path of the resulting file. With maxBytes > 0 yt-dlp aborts formats larger
+// than that instead of downloading them whole; the error is then too_large.
+func (r *Runner) Download(ctx context.Context, rawURL, selector, dir, cookies string, maxBytes int64) (string, error) {
 	var path string
 	_, err := r.withCookies(rawURL, cookies, func(extra []string) error {
 		args := append(r.common(), extra...)
@@ -83,11 +85,18 @@ func (r *Runner) Download(ctx context.Context, rawURL, selector, dir, cookies st
 			"-f", selector,
 			"--merge-output-format", "mp4",
 			"-o", filepath.Join(dir, "%(id)s.%(ext)s"),
-			"--print", "after_move:filepath",
-			"--", rawURL)
-		out, _, err := r.run(ctx, downloadTimeout, dir, args)
+			"--print", "after_move:filepath")
+		if maxBytes > 0 {
+			args = append(args, "--max-filesize", strconv.FormatInt(maxBytes, 10))
+		}
+		args = append(args, "--", rawURL)
+		out, errOut, err := r.run(ctx, downloadTimeout, dir, args)
 		if err != nil {
 			return err
+		}
+		// yt-dlp skips an oversized format with exit code 0 and no file.
+		if bytes.Contains(out, []byte("max-filesize")) || bytes.Contains(errOut, []byte("max-filesize")) {
+			return errs.New(errs.TooLarge, "format exceeds --max-filesize")
 		}
 		path, err = outputFile(dir, out)
 		return err

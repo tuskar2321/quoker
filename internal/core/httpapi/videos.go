@@ -108,7 +108,11 @@ func (s *server) resolveVideo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errs.New(errs.InvalidRequest, "url is required, up to 2048 characters"))
 		return
 	}
-	res, err := s.videos.Resolve(r.Context(), req.URL, principalFrom(r.Context()).UserID)
+	userID := principalFrom(r.Context()).UserID
+	if overLimit(w, r, s.resolveLimit, userID, "") {
+		return
+	}
+	res, err := s.videos.Resolve(r.Context(), req.URL, userID)
 	if err != nil {
 		writeError(w, r, err)
 		return

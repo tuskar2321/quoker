@@ -46,7 +46,9 @@ const (
 	// processedUpdatesTTL is how long update ids are kept for dedup
 	// (docs/05-data-model.md); Telegram never re-sends older ones.
 	processedUpdatesTTL = 7 * 24 * time.Hour
-	purgeInterval       = time.Hour
+	// finishedTaskTTL is how long done/failed tasks are kept.
+	finishedTaskTTL = 30 * 24 * time.Hour
+	purgeInterval   = time.Hour
 	// headerFingerprint is set by Caddy after mTLS verification.
 	headerFingerprint = "X-Client-Cert-Fingerprint"
 	// headerCertCN is set by Caddy to the certificate's Common Name.
@@ -341,6 +343,7 @@ func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *link
 		}
 		s.complete(ctx, queue.CompleteParams{
 			TaskID: r.TaskId, WorkerID: conn.id, ErrCode: e.Code, ErrMsg: e.Message, Retryable: e.Retryable,
+			RetryAfter: time.Duration(e.RetryAfterS) * time.Second,
 		}, log)
 		log.Info("task failed", "task_id", r.TaskId, "kind", task.Kind, "error_code", e.Code)
 		return
@@ -512,6 +515,9 @@ func (s *Server) dispatchLoop(ctx context.Context, conn *workerConn) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ready, err := s.q.HasReady(ctx); err != nil || !ready {
+				continue // nothing to do: skip Lease and its write lock
+			}
 			running, err := s.q.LeasedCount(ctx, conn.id)
 			if err != nil {
 				s.log.Warn("count leased", "worker", conn.id, "err", err)
@@ -881,13 +887,18 @@ func (s *Server) checkPoller(ctx context.Context) {
 	}
 }
 
-// purgeLoop forgets processed update ids older than processedUpdatesTTL.
+// purgeLoop forgets processed update ids and finished tasks past their TTL.
 func (s *Server) purgeLoop(ctx context.Context) {
 	t := time.NewTicker(purgeInterval)
 	defer t.Stop()
 	for {
 		if err := s.purgeUpdates(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("purge bot updates", "err", err)
+		}
+		if n, err := s.q.PurgeFinished(ctx, s.now().Add(-finishedTaskTTL)); err != nil && ctx.Err() == nil {
+			s.log.Warn("purge finished tasks", "err", err)
+		} else if n > 0 {
+			s.log.Info("finished tasks purged", "count", n)
 		}
 		select {
 		case <-ctx.Done():

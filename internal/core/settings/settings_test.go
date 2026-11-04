@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/store"
+	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
 func newStore(t *testing.T) *Store {
@@ -59,5 +60,27 @@ func TestParseKey(t *testing.T) {
 		if _, err := ParseKey(tt.in); (err != nil) != tt.wantErr {
 			t.Errorf("ParseKey(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
 		}
+	}
+}
+
+// TestSetValidatesNumbers: a typo must not break every versioned request
+// (REVIEW M10).
+func TestSetValidatesNumbers(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, bad := range [][2]string{
+		{string(MinSupportedVersionCode), "1.4"},
+		{string(MinSupportedVersionCode), "-1"},
+		{string(AdminChatID), "@max"},
+	} {
+		if err := st.Set(ctx, Key(bad[0]), bad[1]); !errs.Is(err, errs.InvalidRequest) {
+			t.Errorf("Set(%s, %q) = %v, want invalid_request", bad[0], bad[1], err)
+		}
+	}
+	if err := st.Set(ctx, MinSupportedVersionCode, "42"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set(ctx, AdminChatID, "-1001234"); err != nil {
+		t.Fatal(err)
 	}
 }

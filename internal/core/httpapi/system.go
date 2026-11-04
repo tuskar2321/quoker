@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,10 +29,19 @@ func (s *server) refreshTargets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errs.New(errs.TelegramNotLinked, "telegram is not linked"))
 		return
 	}
+	if !s.refreshing.start(u.ID) {
+		w.WriteHeader(http.StatusAccepted) // the re-check already running covers this request
+		return
+	}
+	if overLimit(w, r, s.refreshLimit, u.ID, "") {
+		s.refreshing.done(u.ID)
+		return
+	}
 	log := loggerFrom(r.Context())
 	// Outlives the request on purpose: the client gets 202 and polls targets.
 	bg := context.WithoutCancel(r.Context())
 	go func() {
+		defer s.refreshing.done(u.ID)
 		ctx, cancel := context.WithTimeout(bg, refreshTimeout)
 		defer cancel()
 		if err := s.targets.Refresh(ctx, u.ID, u.TelegramUserID); err != nil {
@@ -148,4 +158,26 @@ func (s *server) putInstagramCookies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// inFlight tracks users with a target re-check running.
+type inFlight struct {
+	mu      sync.Mutex
+	running map[int64]bool
+}
+
+func (f *inFlight) start(userID int64) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[userID] {
+		return false
+	}
+	f.running[userID] = true
+	return true
+}
+
+func (f *inFlight) done(userID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.running, userID)
 }

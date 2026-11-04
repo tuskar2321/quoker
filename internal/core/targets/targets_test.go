@@ -271,3 +271,28 @@ func TestList_isolatedByUser(t *testing.T) {
 		t.Fatal("expected different target rows for different users")
 	}
 }
+
+// TestUpdateChatID_alreadyConnected: one owner already has the new
+// supergroup, another does not; neither breaks the migration (REVIEW M15).
+func TestUpdateChatID_alreadyConnected(t *testing.T) {
+	st, svc, clk := openTest(t)
+	ctx := context.Background()
+	early := insertUser(t, st, clk.Now())
+	late := insertUser(t, st, clk.Now())
+	oldEarly, _ := svc.Upsert(ctx, targets.Target{OwnerUserID: early, ChatID: -500, Type: "group", Title: "G", Status: targets.StatusActive})
+	newEarly, _ := svc.Upsert(ctx, targets.Target{OwnerUserID: early, ChatID: -100500, Type: "group", Title: "G", Status: targets.StatusActive})
+	oldLate, _ := svc.Upsert(ctx, targets.Target{OwnerUserID: late, ChatID: -500, Type: "group", Title: "G", Status: targets.StatusActive})
+
+	if err := svc.UpdateChatID(ctx, -500, -100500); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	if got, _ := svc.Get(ctx, early, oldEarly.ID); got.Status != targets.StatusInactive {
+		t.Fatalf("duplicate old target = %+v", got)
+	}
+	if got, _ := svc.Get(ctx, early, newEarly.ID); got.Status != targets.StatusActive {
+		t.Fatalf("new target = %+v", got)
+	}
+	if got, _ := svc.Get(ctx, late, oldLate.ID); got.ChatID != -100500 || got.Status != targets.StatusActive {
+		t.Fatalf("moved target = %+v", got)
+	}
+}

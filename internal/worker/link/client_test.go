@@ -134,3 +134,64 @@ func TestRevokedWorkerStops(t *testing.T) {
 		t.Fatal("revoked client kept running")
 	}
 }
+
+// sleepyHandler finishes a send after delay unless cancelled first.
+type sleepyHandler struct {
+	delay   time.Duration
+	started chan struct{}
+}
+
+func (h *sleepyHandler) Handle(ctx context.Context, task *linkv1.Task, conn workerlink.Conn) error {
+	close(h.started)
+	select {
+	case <-time.After(h.delay):
+	case <-ctx.Done():
+		return conn.SendResult(&linkv1.TaskResult{TaskId: task.TaskId,
+			Result: &linkv1.TaskResult_Error{Error: &linkv1.TaskError{Code: "cancelled"}}})
+	}
+	return conn.SendResult(&linkv1.TaskResult{TaskId: task.TaskId,
+		Result: &linkv1.TaskResult_SendVideo{SendVideo: &linkv1.SendVideoResult{MessageId: 1}}})
+}
+
+// TestStopLetsTasksFinish: on SIGTERM the running send completes and its
+// result reaches the core before the worker exits (REVIEW M19).
+func TestStopLetsTasksFinish(t *testing.T) {
+	tests := []struct {
+		name    string
+		delay   time.Duration
+		drain   time.Duration
+		want    queue.Status
+		maxExit time.Duration
+	}{
+		{"finishes within the drain", 300 * time.Millisecond, 5 * time.Second, queue.StatusDone, 3 * time.Second},
+		{"cancelled after the drain", time.Hour, 300 * time.Millisecond, queue.StatusFailed, 8 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := startCore(t)
+			payload, _ := proto.Marshal(&linkv1.SendVideoTask{VideoId: "tiktok:1"})
+			id, _ := c.q.Enqueue(context.Background(), queue.EnqueueParams{Kind: queue.KindSendVideo, Payload: payload, MaxAttempts: 1})
+			h := &sleepyHandler{delay: tt.delay, started: make(chan struct{})}
+			client := workerlink.New(workerlink.Config{WorkerID: "w1", CoreAddr: c.addr, Handler: h, Drain: tt.drain}, quiet, nil)
+			stop, sigterm := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { client.Run(stop); close(done) }()
+
+			<-h.started
+			start := time.Now()
+			sigterm()
+			select {
+			case <-done:
+			case <-time.After(tt.maxExit):
+				t.Fatal("worker did not exit in time")
+			}
+			if took := time.Since(start); took < tt.delay && tt.want == queue.StatusDone {
+				t.Fatalf("exited after %s, before the task could finish", took)
+			}
+			waitFor(t, "task status", func() bool {
+				task, err := c.q.Get(context.Background(), id)
+				return err == nil && task.Status == tt.want
+			})
+		})
+	}
+}

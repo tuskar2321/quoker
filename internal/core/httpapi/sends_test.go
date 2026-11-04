@@ -58,6 +58,9 @@ func TestCreateSend(t *testing.T) {
 		{"caption too long", true, "k2", func(id int64) map[string]any {
 			return map[string]any{"video_id": "tiktok:1", "target_id": id, "caption": long}
 		}, http.StatusBadRequest, "invalid_request"},
+		{"emoji caption over the limit in UTF-16", true, "k5", func(id int64) map[string]any {
+			return map[string]any{"video_id": "tiktok:1", "target_id": id, "caption": strings.Repeat("😀", 600)}
+		}, http.StatusBadRequest, "invalid_request"},
 		{"telegram not linked", false, "k3", func(id int64) map[string]any {
 			return map[string]any{"video_id": "tiktok:1", "target_id": id}
 		}, http.StatusConflict, "telegram_not_linked"},

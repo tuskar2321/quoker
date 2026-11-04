@@ -41,6 +41,7 @@ import (
 	corelink "github.com/tuskar2321/quoker/internal/core/link"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
+	"github.com/tuskar2321/quoker/internal/core/ratelimit"
 	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/results"
 	"github.com/tuskar2321/quoker/internal/core/sends"
@@ -209,6 +210,7 @@ func serve(cfg config.Config) error {
 	releasesSvc := releases.New(st, cfg.ReleasesDir, nil)
 	historySvc := history.New(st, nil)
 	go historySvc.Run(ctx, history.CleanupInterval, func(err error) { log.Warn("history cleanup", "err", err) })
+	go ratelimit.RunPurge(ctx, st, time.Hour, 24*time.Hour, func(err error) { log.Warn("rate limit purge", "err", err) })
 	if cfg.UploadBase == "" {
 		log.Warn("UPLOAD_BASE and DOMAIN are empty: workers cannot upload covers and files")
 	}
