@@ -12,6 +12,7 @@ import (
 type Config struct {
 	DBPath   string // DB_PATH, required
 	HTTPAddr string // HTTP_ADDR, public API, default :8080
+	GRPCAddr string // GRPC_ADDR, worker link, default :9090
 	LogLevel string // LOG_LEVEL, default info
 }
 
@@ -20,6 +21,7 @@ func Load(getenv func(string) string) (Config, error) {
 	c := Config{
 		DBPath:   getenv("DB_PATH"),
 		HTTPAddr: or(getenv("HTTP_ADDR"), ":8080"),
+		GRPCAddr: or(getenv("GRPC_ADDR"), ":9090"),
 		LogLevel: or(getenv("LOG_LEVEL"), "info"),
 	}
 	var errs []error
@@ -28,6 +30,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if _, _, err := net.SplitHostPort(c.HTTPAddr); err != nil {
 		errs = append(errs, fmt.Errorf("HTTP_ADDR %q: %w", c.HTTPAddr, err))
+	}
+	if _, _, err := net.SplitHostPort(c.GRPCAddr); err != nil {
+		errs = append(errs, fmt.Errorf("GRPC_ADDR %q: %w", c.GRPCAddr, err))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, fmt.Errorf("config: %w", err)

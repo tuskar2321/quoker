@@ -29,8 +29,8 @@ lint:
 run-core: $(ENV_FILE)
 	set -a && . ./$(ENV_FILE) && set +a && go run ./cmd/core
 
-run-worker:
-	@echo "cmd/worker is not implemented yet" >&2; exit 1
+run-worker: $(ENV_FILE)
+	set -a && . ./$(ENV_FILE) && set +a && go run ./cmd/worker
 
 dev:
 	@echo "local compose (core + worker + fake Telegram) is not implemented yet" >&2; exit 1

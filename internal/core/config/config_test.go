@@ -15,15 +15,16 @@ func TestLoad(t *testing.T) {
 		{
 			name: "defaults",
 			env:  map[string]string{"DB_PATH": "/data/quoker.db"},
-			want: Config{DBPath: "/data/quoker.db", HTTPAddr: ":8080", LogLevel: "info"},
+			want: Config{DBPath: "/data/quoker.db", HTTPAddr: ":8080", GRPCAddr: ":9090", LogLevel: "info"},
 		},
 		{
 			name: "overrides",
-			env:  map[string]string{"DB_PATH": "q.db", "HTTP_ADDR": "127.0.0.1:9000", "LOG_LEVEL": "debug"},
-			want: Config{DBPath: "q.db", HTTPAddr: "127.0.0.1:9000", LogLevel: "debug"},
+			env:  map[string]string{"DB_PATH": "q.db", "HTTP_ADDR": "127.0.0.1:9000", "GRPC_ADDR": "127.0.0.1:9091", "LOG_LEVEL": "debug"},
+			want: Config{DBPath: "q.db", HTTPAddr: "127.0.0.1:9000", GRPCAddr: "127.0.0.1:9091", LogLevel: "debug"},
 		},
 		{name: "missing db path", env: map[string]string{}, wantErr: "DB_PATH is required"},
-		{name: "bad addr", env: map[string]string{"DB_PATH": "q.db", "HTTP_ADDR": "8080"}, wantErr: "HTTP_ADDR"},
+		{name: "bad http addr", env: map[string]string{"DB_PATH": "q.db", "HTTP_ADDR": "8080"}, wantErr: "HTTP_ADDR"},
+		{name: "bad grpc addr", env: map[string]string{"DB_PATH": "q.db", "GRPC_ADDR": "9090"}, wantErr: "GRPC_ADDR"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

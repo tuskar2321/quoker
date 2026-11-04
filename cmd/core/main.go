@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,12 +23,18 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/tuskar2321/quoker/internal/core/accounts"
 	"github.com/tuskar2321/quoker/internal/core/config"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
+	corelink "github.com/tuskar2321/quoker/internal/core/link"
+	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
 	"github.com/tuskar2321/quoker/internal/shared/logging"
+
+	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
 )
 
 const (
@@ -119,11 +126,37 @@ func serve(cfg config.Config) error {
 	defer func() { _ = st.Close() }()
 	log.Info("database ready", "path", cfg.DBPath)
 
+	set := settings.New(st.DB(), nil)
+	q := queue.New(st, nil)
+
+	linkSrv := corelink.New(ctx, corelink.Deps{
+		Store:    st,
+		Queue:    q,
+		Settings: set,
+		Log:      log.With("component", "link"),
+	})
+	gs := grpc.NewServer()
+	linkv1.RegisterLinkServiceServer(gs, linkSrv)
+
+	grpcLis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.GRPCAddr)
+	if err != nil {
+		return fmt.Errorf("grpc listen: %w", err)
+	}
+
+	errc := make(chan error, 2)
+	go func() {
+		log.Info("grpc listening", "addr", cfg.GRPCAddr)
+		if err := gs.Serve(grpcLis); err != nil {
+			errc <- fmt.Errorf("grpc server: %w", err)
+		}
+		close(errc)
+	}()
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Deps{
 			Accounts: accounts.New(st, nil, nil),
-			Settings: settings.New(st.DB(), nil),
+			Settings: set,
 			Ready:    st.Ready,
 			Log:      log,
 		}),
@@ -131,25 +164,28 @@ func serve(cfg config.Config) error {
 		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
-	errc := make(chan error, 1)
+	httpErrc := make(chan error, 1)
 	go func() {
 		log.Info("http listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- fmt.Errorf("http server: %w", err)
+			httpErrc <- fmt.Errorf("http server: %w", err)
 		}
-		close(errc)
+		close(httpErrc)
 	}()
 
 	select {
 	case err := <-errc:
+		return err
+	case err := <-httpErrc:
 		return err
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
 	shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	gs.GracefulStop()
 	if err := srv.Shutdown(shCtx); err != nil {
 		return fmt.Errorf("http shutdown: %w", err)
 	}
-	return <-errc
+	return <-httpErrc
 }
