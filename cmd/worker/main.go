@@ -75,7 +75,13 @@ func run(args []string, getenv func(string) string) error {
 	}
 	// Uploads to the core carry the client certificate; Telegram and the
 	// platforms are reached with the default transport.
-	coreHTTP := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true}}
+	var coreTransport http.RoundTripper = &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true}
+	if tlsCfg == nil {
+		// Local dev without Caddy: identify ourselves the way the gRPC client
+		// does. In production Caddy overwrites the header from the certificate.
+		coreTransport = devIdentity{next: coreTransport, workerID: cfg.WorkerID}
+	}
+	coreHTTP := &http.Client{Transport: coreTransport}
 	handlers := tasks.New(tasks.Deps{
 		YtDlp:     ytdl,
 		Telegram:  telegram.New(&http.Client{}),
@@ -148,4 +154,17 @@ func (p *configProxy) CoreConfig() *linkv1.Config {
 		return nil
 	}
 	return p.client.CoreConfig()
+}
+
+// devIdentity adds the certificate headers Caddy would set in production.
+type devIdentity struct {
+	next     http.RoundTripper
+	workerID string
+}
+
+func (d devIdentity) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("X-Client-Cert-Fingerprint", d.workerID)
+	r.Header.Set("X-Client-Cert-CN", d.workerID)
+	return d.next.RoundTrip(r)
 }

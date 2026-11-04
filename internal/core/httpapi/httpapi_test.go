@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
@@ -32,6 +33,9 @@ type env struct {
 	st       *store.Store
 	acc      *accounts.Service
 	targets  *targets.Service
+	videos   *videos.Service
+	files    *files.Store
+	queue    *queue.Store
 	settings *settings.Store
 	now      time.Time
 }
@@ -50,11 +54,16 @@ func newEnv(t *testing.T) *env {
 	e.targets = targets.New(st, clock)
 	q := queue.New(st, clock)
 	vids := videos.New(st, q, clock)
+	e.videos, e.queue = vids, q
+	if e.files, err = files.New(st, t.TempDir(), 1<<30, clock, nil); err != nil {
+		t.Fatal(err)
+	}
 	h := New(Deps{
 		Accounts: e.acc,
 		Videos:   vids,
 		Targets:  e.targets,
 		Sends:    sends.New(st, q, vids, e.targets, clock),
+		Files:    e.files,
 		Settings: e.settings,
 		Ready:    st.Ready,
 		Log:      slog.New(slog.NewJSONHandler(io.Discard, nil)),

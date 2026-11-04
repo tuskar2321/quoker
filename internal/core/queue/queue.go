@@ -400,7 +400,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Task, error) {
 		return nil, fmt.Errorf("get task: %w", err)
 	}
 	_ = leaseUntilMS
-	_ = progressNull
+	t.Progress = int(progressNull.Int64)
 	t.Kind = Kind(kind)
 	t.Status = Status(status)
 	t.WorkerID = workerIDNull.String

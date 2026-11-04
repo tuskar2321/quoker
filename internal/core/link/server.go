@@ -52,8 +52,10 @@ type Deps struct {
 	Queue    *queue.Store
 	Settings *settings.Store
 	Results  ResultHandler // nil ignores results
-	Log      *slog.Logger
-	Now      func() time.Time
+	// UploadBase is sent to workers as Config.upload_base.
+	UploadBase string
+	Log        *slog.Logger
+	Now        func() time.Time
 }
 
 // Server is the gRPC LinkService implementation.
@@ -63,6 +65,7 @@ type Server struct {
 	q       *queue.Store
 	set     *settings.Store
 	results ResultHandler
+	upload  string
 	log     *slog.Logger
 	now     func() time.Time
 
@@ -81,6 +84,7 @@ func New(ctx context.Context, d Deps) *Server {
 		q:       d.Queue,
 		set:     d.Settings,
 		results: d.Results,
+		upload:  d.UploadBase,
 		log:     d.Log,
 		now:     d.Now,
 		workers: make(map[string]*workerConn),
@@ -103,13 +107,13 @@ type workerConn struct {
 
 // Connect implements LinkServiceServer.
 func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
-	fingerprint, cn, err := s.certInfo(stream.Context())
+	fingerprint, _, err := s.certInfo(stream.Context())
 	if err != nil {
 		return status.Error(codes.Unauthenticated, err.Error())
 	}
 
 	// Verify worker is known and allowed.
-	workerID, err := s.verifyWorker(stream.Context(), fingerprint, cn)
+	workerID, err := s.VerifyWorker(stream.Context(), fingerprint)
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
@@ -477,9 +481,10 @@ func (s *Server) loadConfig(ctx context.Context, workerID string) (*linkv1.Confi
 		InstagramCookies: cookies,
 		PollUpdates:      pollerID == workerID,
 		MaxParallel:      2,
-		MaxSendBytes:     50 * 1024 * 1024,
-		MaxDownloadBytes: 100 * 1024 * 1024,
+		MaxSendBytes:     50 << 20,
+		MaxDownloadBytes: 500 << 20,
 		BotApiBase:       "https://api.telegram.org",
+		UploadBase:       s.upload,
 	}, nil
 }
 
@@ -562,8 +567,8 @@ func (s *Server) leaseRecoveryLoop(ctx context.Context) {
 	}
 }
 
-// verifyWorker looks up the worker in the DB by fingerprint and checks status.
-func (s *Server) verifyWorker(ctx context.Context, fingerprint, _ string) (string, error) {
+// VerifyWorker resolves a certificate fingerprint to an allowed worker id.
+func (s *Server) VerifyWorker(ctx context.Context, fingerprint string) (string, error) {
 	var id, dbStatus string
 	err := s.st.DB().QueryRowContext(ctx,
 		`SELECT id, status FROM workers WHERE fingerprint = ?`, fingerprint).Scan(&id, &dbStatus)

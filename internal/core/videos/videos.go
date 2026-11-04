@@ -21,6 +21,8 @@ import (
 const (
 	// videoTTL is how long metadata and the file live after last access.
 	videoTTL = 24 * time.Hour
+	// MaxDownloadBytes caps phone files (docs/11-nfr-security.md).
+	MaxDownloadBytes = 500 << 20
 	// DefaultResolveWait is how long POST /resolve blocks waiting for the worker result.
 	DefaultResolveWait = 15 * time.Second
 	// resolvePoll is the interval between DB polls during the wait.
@@ -58,6 +60,9 @@ type Video struct {
 	ResolvedAt   time.Time
 	ExpiresAt    time.Time
 	LastAccessAt time.Time
+	// SourceURL is the link the user submitted; set only by Resolve, the
+	// table does not keep it.
+	SourceURL string
 }
 
 // Service provides video operations.
@@ -105,6 +110,7 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, callerID int64) (R
 	// 1. Check the alias table (short links already resolved).
 	if videoID, ok := s.lookupAlias(ctx, link.Key); ok {
 		if v, err := s.touch(ctx, videoID); err == nil {
+			v.SourceURL = rawURL
 			return ResolveResult{Video: v}, nil
 		}
 		// Cache miss after alias hit: the video row expired; fall through to re-resolve.
@@ -113,6 +119,7 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, callerID int64) (R
 	// 2. Check by video_id when it is known without network (long-form URLs).
 	if vid := link.VideoID(); vid != "" {
 		if v, err := s.touch(ctx, vid); err == nil {
+			v.SourceURL = rawURL
 			return ResolveResult{Video: v}, nil
 		}
 	}
@@ -143,6 +150,7 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, callerID int64) (R
 			if v, err := s.touch(ctx, videoIDFromTask(t)); err == nil {
 				// Record the alias so the same short link resolves instantly.
 				_ = s.saveAlias(ctx, link.Key, v.ID)
+				v.SourceURL = rawURL
 				return ResolveResult{Video: v}, nil
 			}
 			// Worker completed but the row is not in DB yet (race): fall through.
@@ -233,8 +241,9 @@ type Task struct {
 	Kind     string
 	Status   string
 	Progress int
-	VideoID  string // non-empty when kind=resolve and status=done
+	VideoID  string // set when status=done
 	ErrCode  string
+	Err      error // public error for failed tasks
 }
 
 // GetTask returns a task row. When kind=resolve and status=done, it also
@@ -251,17 +260,81 @@ func (s *Service) GetTask(ctx context.Context, taskID string) (*Task, *Video, er
 		Progress: t.Progress,
 		ErrCode:  t.ErrorCode,
 	}
-	if t.Kind == queue.KindResolve && t.Status == queue.StatusDone {
-		vid := videoIDFromTask(t)
-		out.VideoID = vid
-		if vid != "" {
-			v, err := s.touch(ctx, vid)
-			if err == nil {
-				return out, v, nil
-			}
+	if t.Status == queue.StatusFailed || t.Status == queue.StatusCancelled {
+		out.Err = workerTaskError(t)
+	}
+	if t.Status != queue.StatusDone {
+		return out, nil, nil
+	}
+	var vid string
+	switch t.Kind {
+	case queue.KindResolve:
+		vid = videoIDFromTask(t)
+	case queue.KindDownload:
+		var p linkv1.DownloadTask
+		if proto.Unmarshal(t.Payload, &p) == nil {
+			vid = p.VideoId
+		}
+	}
+	out.VideoID = vid
+	if vid != "" {
+		if v, err := s.touch(ctx, vid); err == nil {
+			return out, v, nil
 		}
 	}
 	return out, nil, nil
+}
+
+// EnqueueDownload queues the worker download of v's phone file (one active
+// task per video) and marks the file as preparing.
+func (s *Service) EnqueueDownload(ctx context.Context, v *Video, userID int64) (string, error) {
+	payload := mustMarshal(&linkv1.DownloadTask{VideoId: v.ID, Url: v.CanonicalURL, MaxBytes: MaxDownloadBytes})
+	var taskID string
+	err := s.st.Tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		taskID, err = s.q.EnqueueTx(ctx, tx, queue.EnqueueParams{
+			Kind: queue.KindDownload, Payload: payload, DedupKey: "download:" + v.ID, UserID: userID,
+		})
+		if err != nil && !errors.Is(err, queue.ErrDuplicate) {
+			return fmt.Errorf("enqueue download: %w", err)
+		}
+		_, err = tx.ExecContext(ctx,
+			`UPDATE videos SET file_status = 'preparing', file_size = NULL, file_sha256 = NULL WHERE id = ?`, v.ID)
+		return err
+	})
+	return taskID, err
+}
+
+// SetFileReady records a verified cached file.
+func (s *Service) SetFileReady(ctx context.Context, id string, size int64, sha256Hex string) error {
+	_, err := s.st.DB().ExecContext(ctx,
+		`UPDATE videos SET file_status = 'ready', file_size = ?, file_sha256 = ? WHERE id = ?`, size, sha256Hex, id)
+	return err
+}
+
+// SetFileFailed marks a preparing file as failed.
+func (s *Service) SetFileFailed(ctx context.Context, id string) error {
+	_, err := s.st.DB().ExecContext(ctx,
+		`UPDATE videos SET file_status = 'failed' WHERE id = ? AND file_status = 'preparing'`, id)
+	return err
+}
+
+// ResetFile forgets a file that is no longer on disk.
+func (s *Service) ResetFile(ctx context.Context, id string) error {
+	_, err := s.st.DB().ExecContext(ctx,
+		`UPDATE videos SET file_status = 'none', file_size = NULL, file_sha256 = NULL WHERE id = ?`, id)
+	return err
+}
+
+// RecordDownloaded writes a "downloaded" history entry.
+func (s *Service) RecordDownloaded(ctx context.Context, userID int64, id string) error {
+	if _, err := s.touch(ctx, id); err != nil {
+		return err
+	}
+	_, err := s.st.DB().ExecContext(ctx,
+		`INSERT INTO history (user_id, video_id, action, created_at) VALUES (?, ?, 'downloaded', ?)`,
+		userID, id, s.now().UnixMilli())
+	return err
 }
 
 // touch updates last_access_at and extends expires_at, then returns the video.

@@ -28,6 +28,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/accounts"
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/config"
+	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
 	corelink "github.com/tuskar2321/quoker/internal/core/link"
 	"github.com/tuskar2321/quoker/internal/core/queue"
@@ -137,13 +138,22 @@ func serve(cfg config.Config) error {
 	botSvc := bot.New(st, set, nil)
 	targetsSvc := targets.New(st, nil)
 	sendsSvc := sends.New(st, q, videosSvc, targetsSvc, nil)
+	cache, err := files.New(st, cfg.CacheDir, cfg.CacheMaxBytes, nil, log.With("component", "files"))
+	if err != nil {
+		return err
+	}
+	go cache.Run(ctx, files.CleanupInterval)
+	if cfg.UploadBase == "" {
+		log.Warn("UPLOAD_BASE and DOMAIN are empty: workers cannot upload covers and files")
+	}
 
 	linkSrv := corelink.New(ctx, corelink.Deps{
-		Store:    st,
-		Queue:    q,
-		Settings: set,
-		Results:  results.New(videosSvc, sendsSvc),
-		Log:      log.With("component", "link"),
+		Store:      st,
+		Queue:      q,
+		Settings:   set,
+		Results:    results.New(videosSvc, sendsSvc, cache),
+		UploadBase: cfg.UploadBase,
+		Log:        log.With("component", "link"),
 	})
 	gs := grpc.NewServer()
 	linkv1.RegisterLinkServiceServer(gs, linkSrv)
@@ -170,6 +180,7 @@ func serve(cfg config.Config) error {
 			Videos:   videosSvc,
 			Targets:  targetsSvc,
 			Sends:    sendsSvc,
+			Files:    cache,
 			Settings: set,
 			Ready:    st.Ready,
 			Log:      log,
@@ -187,10 +198,29 @@ func serve(cfg config.Config) error {
 		close(httpErrc)
 	}()
 
+	// Worker uploads; reachable only through Caddy's mTLS listener.
+	filesSrv := &http.Server{
+		Addr:              cfg.FilesAddr,
+		Handler:           cache.InternalHandler(linkSrv.VerifyWorker, log.With("component", "files")),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+	}
+	filesErrc := make(chan error, 1)
+	go func() {
+		log.Info("files listening", "addr", cfg.FilesAddr)
+		if err := filesSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			filesErrc <- fmt.Errorf("files server: %w", err)
+		}
+		close(filesErrc)
+	}()
+
 	select {
 	case err := <-errc:
 		return err
 	case err := <-httpErrc:
+		return err
+	case err := <-filesErrc:
 		return err
 	case <-ctx.Done():
 	}
@@ -198,6 +228,9 @@ func serve(cfg config.Config) error {
 	shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	gs.GracefulStop()
+	if err := filesSrv.Shutdown(shCtx); err != nil {
+		log.Warn("files shutdown", "err", err)
+	}
 	if err := srv.Shutdown(shCtx); err != nil {
 		return fmt.Errorf("http shutdown: %w", err)
 	}

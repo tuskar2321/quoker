@@ -13,6 +13,7 @@ import (
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
 	"github.com/tuskar2321/quoker/internal/core/bot"
+	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
 	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
@@ -26,6 +27,8 @@ const (
 	registerPerHour = 5
 	// sendsPerHour is the send limit per user.
 	sendsPerHour = 30
+	// streamsPerSession caps parallel file downloads (docs/03-public-api.md).
+	streamsPerSession = 2
 	// apiTimeout bounds JSON endpoints; file streaming gets its own limits.
 	apiTimeout = 15 * time.Second
 )
@@ -37,6 +40,7 @@ type Deps struct {
 	Videos   *videos.Service
 	Targets  *targets.Service
 	Sends    *sends.Service
+	Files    *files.Store
 	Settings *settings.Store
 	Ready    func(context.Context) error // /readyz probe
 	Log      *slog.Logger
@@ -49,11 +53,13 @@ type server struct {
 	videos    *videos.Service
 	targets   *targets.Service
 	sends     *sends.Service
+	files     *files.Store
 	settings  *settings.Store
 	ready     func(context.Context) error
 	now       func() time.Time
 	register  *ratelimit.Memory
 	sendLimit *ratelimit.Memory
+	streams   *streamLimiter
 }
 
 // New builds the HTTP handler of the public API.
@@ -67,11 +73,13 @@ func New(d Deps) http.Handler {
 		videos:    d.Videos,
 		targets:   d.Targets,
 		sends:     d.Sends,
+		files:     d.Files,
 		settings:  d.Settings,
 		ready:     d.Ready,
 		now:       d.Now,
 		register:  ratelimit.NewMemory(registerPerHour, time.Hour, d.Now),
 		sendLimit: ratelimit.NewMemory(sendsPerHour, time.Hour, d.Now),
+		streams:   newStreamLimiter(streamsPerSession),
 	}
 
 	r := chi.NewRouter()
@@ -87,12 +95,18 @@ func New(d Deps) http.Handler {
 	r.Get("/readyz", s.readyz)
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(limitBody, middleware.Timeout(apiTimeout), requireVersion(d.Settings))
+		r.Use(limitBody, requireVersion(d.Settings))
 
-		r.Post("/auth/register", s.registerUser)
+		// File streaming is bounded by the client, not by apiTimeout.
+		r.With(requireSession(d.Accounts)).Get("/videos/{video_id}/file", s.videoFile)
 
 		r.Group(func(r chi.Router) {
-			r.Use(requireSession(d.Accounts))
+			r.Use(middleware.Timeout(apiTimeout))
+			r.Post("/auth/register", s.registerUser)
+		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(apiTimeout), requireSession(d.Accounts))
 			r.Post("/auth/logout", s.logout)
 			r.Get("/me", s.me)
 			r.Post("/auth/telegram/link", s.createTelegramLink)
@@ -101,6 +115,9 @@ func New(d Deps) http.Handler {
 
 			r.Post("/videos/resolve", s.resolveVideo)
 			r.Get("/videos/{video_id}", s.getVideo)
+			r.Get("/videos/{video_id}/thumbnail", s.videoThumbnail)
+			r.Post("/videos/{video_id}/prepare", s.prepareVideo)
+			r.Post("/videos/{video_id}/downloaded", s.videoDownloaded)
 			r.Get("/tasks/{task_id}", s.getTask)
 
 			r.Get("/targets", s.listTargets)
