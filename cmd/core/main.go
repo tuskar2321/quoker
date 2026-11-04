@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -307,12 +308,37 @@ func serve(cfg config.Config) error {
 	log.Info("shutting down")
 	shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	gs.GracefulStop()
-	if err := filesSrv.Shutdown(shCtx); err != nil {
-		log.Warn("files shutdown", "err", err)
+	// ctx is cancelled, so the link server is already sending Shutdown and
+	// closing worker streams; HTTP servers drain in parallel with gRPC.
+	grpcDone := make(chan struct{})
+	go func() {
+		gs.GracefulStop()
+		close(grpcDone)
+	}()
+	var wg sync.WaitGroup
+	var httpErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if err := filesSrv.Shutdown(shCtx); err != nil {
+			log.Warn("files shutdown", "err", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := srv.Shutdown(shCtx); err != nil {
+			httpErr = fmt.Errorf("http shutdown: %w", err)
+		}
+	}()
+	select {
+	case <-grpcDone:
+	case <-shCtx.Done():
+		log.Warn("grpc did not stop in time, closing connections")
+		gs.Stop()
 	}
-	if err := srv.Shutdown(shCtx); err != nil {
-		return fmt.Errorf("http shutdown: %w", err)
+	wg.Wait()
+	if httpErr != nil {
+		return httpErr
 	}
 	return <-httpErrc
 }

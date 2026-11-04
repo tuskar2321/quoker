@@ -173,3 +173,29 @@ func TestReactivateBotAndUpsertClearsReason(t *testing.T) {
 		t.Fatalf("Upsert kept reason %q", got.InactiveReason)
 	}
 }
+
+// slowBot never answers, like a queue with no worker connected.
+type slowBot struct{}
+
+func (slowBot) Call(ctx context.Context, _ string, _ any) (json.RawMessage, error) {
+	<-ctx.Done()
+	return nil, errs.New(errs.WorkerUnavailable, "no worker answered")
+}
+
+// TestCheckRights_noWorkerLeavesTimeForTheSend: the check gives up on its own
+// budget and the caller's context is still usable (REVIEW H2).
+func TestCheckRights_noWorkerLeavesTimeForTheSend(t *testing.T) {
+	st, svc, clk := openTest(t)
+	svc.WithBot(slowBot{}).WithRightsWait(100 * time.Millisecond)
+	uid := insertUser(t, st, clk.Now())
+	tgt, _ := svc.Upsert(context.Background(), targets.Target{OwnerUserID: uid, ChatID: -1, Type: "group", Title: "G", Status: targets.StatusActive})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := svc.CheckRights(ctx, tgt, 42); err != nil {
+		t.Fatalf("err = %v, want the send to go ahead", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the check used up the request context")
+	}
+}

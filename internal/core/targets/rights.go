@@ -11,8 +11,13 @@ import (
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
-// rightsTTL is how long a successful getChatMember check is trusted.
-const rightsTTL = 5 * time.Minute
+const (
+	// rightsTTL is how long a successful getChatMember check is trusted.
+	rightsTTL = 5 * time.Minute
+	// DefaultRightsWait bounds one getChatMember call, so a missing worker
+	// leaves the caller's request time to go on without the check.
+	DefaultRightsWait = 5 * time.Second
+)
 
 // BotError lets rights checks tell "user not in chat" from "bot not in chat"
 // without importing the caller's error type.
@@ -85,7 +90,9 @@ func (s *Service) CheckRights(ctx context.Context, t Target, tgUserID int64) err
 // memberAllowed asks Telegram about tgUserID in t's chat. A chat the bot can
 // no longer see deactivates every target of that chat.
 func (s *Service) memberAllowed(ctx context.Context, t Target, tgUserID int64) (bool, error) {
-	raw, err := s.bot.Call(ctx, "getChatMember", map[string]int64{"chat_id": t.ChatID, "user_id": tgUserID})
+	callCtx, cancel := context.WithTimeout(ctx, s.rightsWait)
+	raw, err := s.bot.Call(callCtx, "getChatMember", map[string]int64{"chat_id": t.ChatID, "user_id": tgUserID})
+	cancel()
 	var be BotError
 	switch {
 	case errors.As(err, &be) && (be.Mentions("user not found") || be.Mentions("participant_id_invalid") || be.Mentions("member not found")):

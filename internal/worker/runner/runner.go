@@ -75,6 +75,8 @@ func New(h Handlers, cfgSrc ConfigSource, maxParallel int, log *slog.Logger) *Ru
 // the caller's goroutine; the link client is responsible for concurrency.
 func (r *Runner) Handle(ctx context.Context, task *linkv1.Task, conn workerlink.Conn) error {
 	log := r.log.With("task_id", task.TaskId)
+	ctx, cancel := context.WithTimeout(ctx, taskDeadline(task))
+	defer cancel()
 
 	cfg := r.cfgSrc.CoreConfig()
 	if cfg == nil {
@@ -232,19 +234,24 @@ func errInternal(msg string) *linkv1.TaskError {
 	return &linkv1.TaskError{Code: "internal", Message: msg, Retryable: true}
 }
 
-// WithTimeout wraps a handler call with a deadline derived from the task lease.
-// leaseMS is the lease duration in milliseconds from the Task message.
-func WithTimeout(ctx context.Context, leaseMS int64, fn func(context.Context) error) error {
-	if leaseMS <= 0 {
-		return fn(ctx)
+const (
+	// longTaskDeadline caps downloads and sends: their leases are renewed by
+	// progress, so without a cap a hung upload would hold a slot forever.
+	longTaskDeadline = 30 * time.Minute
+	// leaseMargin leaves time to report before the core's lease runs out.
+	leaseMargin = 5 * time.Second
+)
+
+// taskDeadline bounds a task: short tasks must finish within their lease,
+// long ones within longTaskDeadline.
+func taskDeadline(task *linkv1.Task) time.Duration {
+	switch task.Kind.(type) {
+	case *linkv1.Task_Download, *linkv1.Task_SendVideo:
+		return longTaskDeadline
 	}
-	// Leave a 5-second safety margin so the worker can report before the core
-	// considers the lease expired.
-	budget := time.Duration(leaseMS)*time.Millisecond - 5*time.Second
-	if budget <= 0 {
-		budget = time.Duration(leaseMS) * time.Millisecond
+	lease := time.Duration(task.LeaseMs) * time.Millisecond
+	if lease <= leaseMargin {
+		return time.Minute
 	}
-	ctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
-	return fn(ctx)
+	return lease - leaseMargin
 }

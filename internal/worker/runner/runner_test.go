@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
 )
@@ -53,6 +54,12 @@ func (f *fakeResolve) Resolve(_ context.Context, _ *linkv1.ResolveTask, _ *linkv
 		return nil, f.err
 	}
 	return &linkv1.ResolveResult{Platform: "tiktok", NativeId: "42"}, nil
+}
+
+type resolveFunc func(ctx context.Context) (*linkv1.ResolveResult, error)
+
+func (f resolveFunc) Resolve(ctx context.Context, _ *linkv1.ResolveTask, _ *linkv1.Config, _ Progress) (*linkv1.ResolveResult, error) {
+	return f(ctx)
 }
 
 type fakeBotCall struct{}
@@ -190,28 +197,38 @@ func TestHandle_missingHandler(t *testing.T) {
 	}
 }
 
-func TestWithTimeout(t *testing.T) {
-	called := false
-	err := WithTimeout(context.Background(), 5_000, func(ctx context.Context) error {
-		called = true
-		if _, ok := ctx.Deadline(); !ok {
-			t.Error("expected deadline in context")
-		}
-		return nil
-	})
-	if err != nil || !called {
-		t.Fatalf("WithTimeout err=%v called=%v", err, called)
+func TestTaskDeadline(t *testing.T) {
+	tests := []struct {
+		name string
+		task *linkv1.Task
+		want time.Duration
+	}{
+		{"resolve: lease minus margin", &linkv1.Task{LeaseMs: 60_000, Kind: &linkv1.Task_Resolve{Resolve: &linkv1.ResolveTask{}}}, 55 * time.Second},
+		{"bot call", &linkv1.Task{LeaseMs: 30_000, Kind: &linkv1.Task_BotCall{BotCall: &linkv1.BotCallTask{}}}, 25 * time.Second},
+		{"send video: hard cap", &linkv1.Task{LeaseMs: 600_000, Kind: &linkv1.Task_SendVideo{SendVideo: &linkv1.SendVideoTask{}}}, 30 * time.Minute},
+		{"no lease", &linkv1.Task{Kind: &linkv1.Task_Resolve{Resolve: &linkv1.ResolveTask{}}}, time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := taskDeadline(tt.task); got != tt.want {
+				t.Fatalf("deadline = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestWithTimeout_zeroLease(t *testing.T) {
-	// leaseMS == 0: no timeout set, context passes through.
-	var gotDeadline bool
-	_ = WithTimeout(context.Background(), 0, func(ctx context.Context) error {
-		_, gotDeadline = ctx.Deadline()
-		return nil
-	})
-	if gotDeadline {
-		t.Fatal("expected no deadline for leaseMS=0")
+// TestHandle_appliesDeadline: a handler that never returns on its own is
+// stopped by the task deadline (REVIEW H8).
+func TestHandle_appliesDeadline(t *testing.T) {
+	var deadline time.Time
+	r, _, conn := makeRunner(Handlers{Resolve: resolveFunc(func(ctx context.Context) (*linkv1.ResolveResult, error) {
+		deadline, _ = ctx.Deadline()
+		return &linkv1.ResolveResult{}, nil
+	})})
+	task := resolveTask()
+	task.LeaseMs = 60_000
+	_ = r.Handle(context.Background(), task, conn)
+	if left := time.Until(deadline); left < 50*time.Second || left > 56*time.Second {
+		t.Fatalf("deadline in %s, want about 55 s", left)
 	}
 }

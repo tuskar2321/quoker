@@ -27,6 +27,8 @@ const (
 	DefaultResolveWait = 15 * time.Second
 	// resolvePoll is the interval between DB polls during the wait.
 	resolvePoll = 300 * time.Millisecond
+	// resolveMargin is kept before the request deadline to write the 202.
+	resolveMargin = 2 * time.Second
 )
 
 // FileStatus mirrors the DB check constraint.
@@ -136,9 +138,13 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, callerID int64) (R
 		return ResolveResult{}, fmt.Errorf("enqueue resolve: %w", err)
 	}
 
-	// 4. Poll up to resolveWait for the task to complete.
-	// time.After uses the real clock; deadline must too so they agree.
+	// 4. Poll up to resolveWait for the task to complete, leaving the request
+	// enough time to answer 202 before its own deadline. time.After uses the
+	// real clock; the deadline must too so they agree.
 	deadline := time.Now().Add(s.resolveWait)
+	if reqDeadline, ok := ctx.Deadline(); ok && reqDeadline.Add(-resolveMargin).Before(deadline) {
+		deadline = reqDeadline.Add(-resolveMargin)
+	}
 	for time.Now().Before(deadline) {
 		t, err := s.q.Get(ctx, taskID)
 		if err != nil {
@@ -153,7 +159,9 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, callerID int64) (R
 				v.SourceURL = rawURL
 				return ResolveResult{Video: v}, nil
 			}
-			// Worker completed but the row is not in DB yet (race): fall through.
+			// Results are applied before the task is marked done, so a
+			// done task without its video means the result was unusable.
+			return ResolveResult{}, errs.New(errs.UpstreamError, "resolve finished without a video")
 		case queue.StatusFailed:
 			return ResolveResult{}, workerTaskError(t)
 		case queue.StatusCancelled:
@@ -161,7 +169,7 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, callerID int64) (R
 		}
 		select {
 		case <-ctx.Done():
-			return ResolveResult{}, ctx.Err()
+			return ResolveResult{TaskID: taskID}, nil // the client polls the task
 		case <-time.After(resolvePoll):
 		}
 	}
@@ -281,6 +289,10 @@ func (s *Service) GetTask(ctx context.Context, taskID string) (*Task, *Video, er
 		if v, err := s.touch(ctx, vid); err == nil {
 			return out, v, nil
 		}
+	}
+	if t.Kind == queue.KindResolve {
+		out.Status = string(queue.StatusFailed)
+		out.Err = errs.New(errs.UpstreamError, "resolve finished without a video")
 	}
 	return out, nil, nil
 }

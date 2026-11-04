@@ -43,3 +43,5 @@ android/*.keystore
 *.iml
 .DS_Store
 .claude/settings.local.json
+# working notes
+REVIEW.md

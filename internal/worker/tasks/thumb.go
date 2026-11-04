@@ -23,8 +23,10 @@ import (
 
 const (
 	thumbFetchTimeout = 20 * time.Second
-	thumbMaxDownload  = 10 << 20
-	thumbMaxPixels    = 40_000_000 // guards against decompression bombs
+	// coverBudget bounds fetching and uploading the cover during resolve.
+	coverBudget      = 10 * time.Second
+	thumbMaxDownload = 10 << 20
+	thumbMaxPixels   = 40_000_000 // guards against decompression bombs
 
 	// Cover stored by the core (docs/07-downloading.md).
 	coverSide  = 720

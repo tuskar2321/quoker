@@ -17,7 +17,8 @@ type workerConfig struct {
 	CertFile string
 	// KeyFile is the path to the private key. CLIENT_KEY, required in production.
 	KeyFile string
-	// CAFile is the path to the CA certificate that signed the core's cert. CA_CERT, required in production.
+	// CAFile is the project CA (CA_CERT). It is added to the system roots,
+	// never replaces them: the core is served with a public certificate.
 	CAFile string
 	// YtdlpBin is the yt-dlp executable. YTDLP_BIN, default yt-dlp.
 	YtdlpBin string

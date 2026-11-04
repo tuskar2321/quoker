@@ -14,11 +14,12 @@ import (
 
 // Resolve fetches metadata and uploads the cover. A failed cover upload does
 // not fail the task: the video is still usable without it.
-func (h *Handlers) Resolve(ctx context.Context, task *linkv1.ResolveTask, cfg *linkv1.Config, _ runner.Progress) (*linkv1.ResolveResult, error) {
+func (h *Handlers) Resolve(ctx context.Context, task *linkv1.ResolveTask, cfg *linkv1.Config, prog runner.Progress) (*linkv1.ResolveResult, error) {
 	info, err := h.d.YtDlp.Metadata(ctx, task.Url, cfg.InstagramCookies)
 	if err != nil {
 		return nil, taskError(err)
 	}
+	prog(50) // renews the lease before the cover work
 	if err := checkContent(info); err != nil {
 		return nil, taskError(err)
 	}
@@ -51,10 +52,13 @@ func (h *Handlers) Resolve(ctx context.Context, task *linkv1.ResolveTask, cfg *l
 	}
 
 	if cfg.UploadBase != "" {
-		cover, err := h.thumbnail(ctx, info.Thumbnail, coverSide, coverBytes)
+		// The cover is optional; keep it from eating the 60 s resolve lease.
+		cctx, cancel := context.WithTimeout(ctx, coverBudget)
+		cover, err := h.thumbnail(cctx, info.Thumbnail, coverSide, coverBytes)
 		if err == nil {
-			err = h.d.Upload.PutThumb(ctx, cfg.UploadBase, videoID, cover)
+			err = h.d.Upload.PutThumb(cctx, cfg.UploadBase, videoID, cover)
 		}
+		cancel()
 		if err != nil {
 			h.d.Log.Warn("cover not uploaded", "video_id", videoID, "err", err)
 		} else {

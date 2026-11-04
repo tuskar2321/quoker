@@ -95,7 +95,7 @@ w.{$DOMAIN} {
 
 `core/.env`: `DOMAIN`, `ACME_EMAIL`, `DB_PATH=/data/quoker.db`, `CACHE_DIR=/cache`, `CACHE_MAX_BYTES=3221225472`, `HTTP_ADDR=:8080`, `FILES_ADDR=:8081`, `GRPC_ADDR=:9090`, `UPLOAD_BASE` (по умолчанию `https://w.<DOMAIN>/internal/v1`; задаётся только для локальной разработки), `RELEASES_DIR=/releases`, `PUBLIC_URL` (по умолчанию `https://api.<DOMAIN>`, префикс `apk_url`), `BACKUP_DIR=/backups`, `LOG_LEVEL=info`, `TZ=Europe/Moscow`. Токен бота и cookies — не здесь, а в БД (`/status`, `/cookies`, CLI `core settings set bot_token`).
 
-`worker/.env`: `CORE_ADDR=w.<домен>:443`, `TRANSPORT=direct|reality`, `CLIENT_CERT=/certs/worker.crt`, `CLIENT_KEY=/certs/worker.key`, `CA_CERT=/certs/ca.crt`, `MAX_PARALLEL=2`, `TMP_DIR=/tmp/quoker`, `TMP_CACHE_MAX_BYTES=1073741824`, `YTDLP_BIN=yt-dlp`, `USER_AGENT=<мобильный UA, по умолчанию встроенный>`, `LOG_LEVEL=info`.
+`worker/.env`: `CORE_ADDR=w.<домен>:443`, `TRANSPORT=direct|reality`, `CLIENT_CERT=/certs/worker.crt`, `CLIENT_KEY=/certs/worker.key`, `CA_CERT=/certs/ca.crt` (необязателен: добавляется к системным корням, а не заменяет их — сертификат `w.<домен>` выдан Let's Encrypt), `MAX_PARALLEL=2`, `TMP_DIR=/tmp/quoker`, `TMP_CACHE_MAX_BYTES=1073741824`, `YTDLP_BIN=yt-dlp`, `USER_AGENT=<мобильный UA, по умолчанию встроенный>`, `LOG_LEVEL=info`.
 
 ## Сертификаты
 

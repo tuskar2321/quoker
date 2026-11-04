@@ -123,7 +123,7 @@ func run(args []string, getenv func(string) string) error {
 	return nil
 }
 
-// buildTLS creates a mTLS config from the cert/key/CA files.
+// buildTLS creates the mTLS config from the client cert/key.
 // Returns nil when no cert files are configured (dev/test: insecure transport).
 func buildTLS(cfg workerConfig) (*tls.Config, error) {
 	if cfg.CertFile == "" && cfg.KeyFile == "" {
@@ -133,22 +133,37 @@ func buildTLS(cfg workerConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load cert: %w", err)
 	}
-	tlsCfg := &tls.Config{
+	roots, err := serverRoots(cfg.CAFile, x509.SystemCertPool)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
+		RootCAs:      roots,
 		MinVersion:   tls.VersionTLS13,
+	}, nil
+}
+
+// serverRoots returns the pool that verifies the core's certificate. Caddy
+// serves w.<domain> with a public (Let's Encrypt) certificate, so the system
+// roots must stay; the project CA, which signs worker certificates, is only
+// added on top for local stands with a self-signed core.
+func serverRoots(caFile string, system func() (*x509.CertPool, error)) (*x509.CertPool, error) {
+	pool, err := system()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
 	}
-	if cfg.CAFile != "" {
-		ca, err := os.ReadFile(cfg.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read CA: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(ca) {
-			return nil, fmt.Errorf("parse CA cert")
-		}
-		tlsCfg.RootCAs = pool
+	if caFile == "" {
+		return pool, nil
 	}
-	return tlsCfg, nil
+	ca, err := os.ReadFile(caFile) //nolint:gosec // operator-supplied path
+	if err != nil {
+		return nil, fmt.Errorf("read CA: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("parse CA cert %s", caFile)
+	}
+	return pool, nil
 }
 
 // configProxy satisfies runner.ConfigSource. It delegates to the link client

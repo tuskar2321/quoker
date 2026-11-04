@@ -264,7 +264,7 @@ var ErrNoTask = errors.New("no task available")
 // RenewLease extends the lease of a leased task. It is a no-op if the task
 // is no longer leased to workerID.
 func (s *Store) RenewLease(ctx context.Context, taskID, workerID string) error {
-	return s.renewLease(ctx, taskID, workerID, 0)
+	return s.renewLease(ctx, taskID, workerID, -1)
 }
 
 // SetProgress stores task progress percent and renews the lease.
@@ -284,10 +284,11 @@ func (s *Store) renewLease(ctx context.Context, taskID, workerID string, progres
 		return fmt.Errorf("find task kind: %w", err)
 	}
 	newLease := now.Add(defaultLease(Kind(kindStr)))
+	// progress < 0 renews the lease and keeps the stored progress.
 	_, err := s.db().ExecContext(ctx,
-		`UPDATE tasks SET lease_until = ?, progress = ?, updated_at = ?
+		`UPDATE tasks SET lease_until = ?, progress = CASE WHEN ? < 0 THEN progress ELSE ? END, updated_at = ?
 		 WHERE id = ? AND worker_id = ? AND status = 'leased'`,
-		newLease.UnixMilli(), progress, now.UnixMilli(), taskID, workerID)
+		newLease.UnixMilli(), progress, progress, now.UnixMilli(), taskID, workerID)
 	if err != nil {
 		return fmt.Errorf("renew lease: %w", err)
 	}

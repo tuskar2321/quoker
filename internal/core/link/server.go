@@ -32,6 +32,9 @@ const (
 	heartbeatInterval = 15 * time.Second
 	// leaseRecoveryInterval is how often we re-queue stalled tasks.
 	leaseRecoveryInterval = 30 * time.Second
+	// queuedTimeout is how long a ready task may wait while no worker is
+	// connected before it fails with worker_unavailable (docs/02).
+	queuedTimeout = 10 * time.Minute
 	// updateTimeout bounds processing of one bot update.
 	updateTimeout = 2 * time.Minute
 	// pollerGrace is how long the poller may be gone before another worker
@@ -70,6 +73,10 @@ type Deps struct {
 	Now        func() time.Time
 }
 
+// ShutdownCoreStopping is the Shutdown reason sent when the core stops; the
+// worker finishes its tasks and reconnects later.
+const ShutdownCoreStopping = "core_stopping"
+
 // UpdateHandler processes one Telegram update forwarded by the poller.
 type UpdateHandler interface {
 	HandleUpdate(ctx context.Context, updateJSON []byte) error
@@ -96,6 +103,7 @@ type Server struct {
 	now     func() time.Time
 
 	updateCh chan pendingUpdate
+	stopping <-chan struct{} // closed when the core shuts down
 
 	mu           sync.Mutex
 	workers      map[string]*workerConn // keyed by worker_id
@@ -124,6 +132,7 @@ func New(ctx context.Context, d Deps) *Server {
 		log:      d.Log,
 		now:      d.Now,
 		updateCh: make(chan pendingUpdate, 256),
+		stopping: ctx.Done(),
 		workers:  make(map[string]*workerConn),
 	}
 	go srv.leaseRecoveryLoop(ctx)
@@ -138,7 +147,6 @@ func New(ctx context.Context, d Deps) *Server {
 type workerConn struct {
 	id          string
 	out         chan *linkv1.CoreMessage
-	tasks       map[string]struct{} // task IDs currently leased to this worker
 	maxParallel int
 	done        chan struct{} // closed when the stream ends
 }
@@ -185,12 +193,15 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 	conn := &workerConn{
 		id:          workerID,
 		out:         make(chan *linkv1.CoreMessage, 32),
-		tasks:       make(map[string]struct{}),
 		maxParallel: maxParallel,
 		done:        make(chan struct{}),
 	}
 	s.registerWorker(conn)
-	defer s.unregisterWorker(conn)
+	defer func() {
+		if s.unregisterWorker(conn) {
+			s.releaseTasks(workerID, log)
+		}
+	}()
 	s.updateWorkerSeen(stream.Context(), workerID, hello)
 	s.claimPollerIfFree(stream.Context(), workerID)
 
@@ -204,8 +215,12 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
+	// The sender has its own context so that on shutdown it can be stopped
+	// first, leaving Connect as the only writer for the final Shutdown.
+	sendCtx, stopSender := context.WithCancel(ctx)
+	defer stopSender()
 	sendErr := make(chan error, 1)
-	go func() { sendErr <- s.senderLoop(ctx, conn, stream) }()
+	go func() { sendErr <- s.senderLoop(sendCtx, conn, stream) }()
 	go s.dispatchLoop(ctx, conn)
 
 	type received struct {
@@ -246,6 +261,16 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 		case <-hbDeadline.C:
 			log.Warn("heartbeat timeout, closing stream")
 			return status.Error(codes.DeadlineExceeded, "heartbeat timeout")
+		case <-s.stopping:
+			stopSender()
+			if err := <-sendErr; err != nil {
+				log.Debug("sender stopped with error", "err", err)
+			}
+			_ = stream.Send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Shutdown{
+				Shutdown: &linkv1.Shutdown{Reason: ShutdownCoreStopping},
+			}})
+			log.Info("stream closed: core is shutting down")
+			return status.Error(codes.Unavailable, "core is shutting down")
 		case r := <-recvCh:
 			if r.err != nil {
 				return r.err
@@ -264,50 +289,81 @@ func (s *Server) handleWorkerMsg(ctx context.Context, conn *workerConn, msg *lin
 		}
 
 	case *linkv1.WorkerMessage_TaskResult:
-		if err := s.handleTaskResult(ctx, conn, v.TaskResult, log); err != nil {
-			log.Warn("handle task result failed", "task", v.TaskResult.TaskId, "err", err)
+		if v.TaskResult.GetDownload() != nil {
+			// Verifying a download hashes up to 500 MB; keep the stream's
+			// receive loop (heartbeats, bot_call results) moving meanwhile.
+			go s.handleTaskResult(context.WithoutCancel(ctx), conn, v.TaskResult, log)
+			return
 		}
+		s.handleTaskResult(ctx, conn, v.TaskResult, log)
 
 	case *linkv1.WorkerMessage_BotUpdate:
 		select {
 		case s.updateCh <- pendingUpdate{conn: conn, update: v.BotUpdate}:
-		case <-ctx.Done():
+		default:
+			// Never block the receive loop: the update handler may be waiting
+			// for a bot_call result on this very stream. Without an ack the
+			// poller sends the update again.
+			log.Warn("bot update dropped, backlog full", "update_id", v.BotUpdate.UpdateId)
 		}
 	}
 }
 
-func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *linkv1.TaskResult, log *slog.Logger) error {
-	s.mu.Lock()
-	delete(conn.tasks, r.TaskId)
-	s.mu.Unlock()
-
+func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *linkv1.TaskResult, log *slog.Logger) {
 	task, err := s.q.Get(ctx, r.TaskId)
 	if err != nil {
-		return fmt.Errorf("get task: %w", err)
+		log.Warn("task result for unknown task", "task_id", r.TaskId, "err", err)
+		return
 	}
-	if task.Status != queue.StatusLeased || task.WorkerID != conn.id {
-		log.Warn("stale task result ignored", "task_id", r.TaskId, "status", task.Status)
-		return nil
-	}
+	mine := task.Status == queue.StatusLeased && task.WorkerID == conn.id
 
-	p := queue.CompleteParams{TaskID: r.TaskId, WorkerID: conn.id}
 	if e := r.GetError(); e != nil {
-		p.ErrCode = e.Code
-		p.ErrMsg = e.Message
-		p.Retryable = e.Retryable
-	} else {
-		if p.Result, err = resultPayload(r); err != nil {
-			return err
+		if !mine {
+			log.Info("stale task error ignored", "task_id", r.TaskId, "status", task.Status)
+			return
 		}
-		// A failed apply must not turn into a retry: for send_video that
-		// would post the video twice.
-		if err := s.results.TaskSucceeded(ctx, task, r); err != nil {
-			log.Error("apply task result", "task_id", r.TaskId, "kind", task.Kind, "err", err)
+		s.complete(ctx, queue.CompleteParams{
+			TaskID: r.TaskId, WorkerID: conn.id, ErrCode: e.Code, ErrMsg: e.Message, Retryable: e.Retryable,
+		}, log)
+		log.Info("task failed", "task_id", r.TaskId, "kind", task.Kind, "error_code", e.Code)
+		return
+	}
+	if task.Status != queue.StatusLeased && task.Status != queue.StatusQueued {
+		log.Info("result for finished task ignored", "task_id", r.TaskId, "status", task.Status)
+		return
+	}
+	result, err := resultPayload(r)
+	if err != nil {
+		log.Warn("bad task result", "task_id", r.TaskId, "err", err)
+		return
+	}
+	if err := s.results.TaskSucceeded(ctx, task, r); err != nil {
+		log.Error("apply task result", "task_id", r.TaskId, "kind", task.Kind, "err", err)
+		// Retrying is safe for everything but send_video: the video is
+		// already in the chat, a retry would post it twice.
+		if task.Kind != queue.KindSendVideo && mine {
+			s.complete(ctx, queue.CompleteParams{
+				TaskID: r.TaskId, WorkerID: conn.id, ErrCode: "internal", ErrMsg: "apply result: " + err.Error(), Retryable: true,
+			}, log)
+			return
 		}
 	}
-	s.complete(ctx, p, log)
-	log.Info("task result", "task_id", r.TaskId, "kind", task.Kind, "error_code", p.ErrCode)
-	return nil
+	if mine {
+		s.complete(ctx, queue.CompleteParams{TaskID: r.TaskId, WorkerID: conn.id, Result: result}, log)
+		log.Info("task done", "task_id", r.TaskId, "kind", task.Kind)
+		return
+	}
+	// A result delivered after a reconnect: the work is done, keep it and
+	// stop any second run (for send_video this is what prevents a duplicate).
+	prev, err := s.q.CompleteLate(ctx, r.TaskId, result)
+	if err != nil {
+		log.Info("late result not recorded", "task_id", r.TaskId, "err", err)
+		return
+	}
+	if prev != "" && prev != conn.id {
+		s.CancelTask(prev, r.TaskId)
+	}
+	log.Info("late task result accepted", "task_id", r.TaskId, "kind", task.Kind, "rerun_on", prev)
 }
 
 // complete marks a task finished and notifies the result handler when the
@@ -439,11 +495,12 @@ func (s *Server) dispatchLoop(ctx context.Context, conn *workerConn) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.mu.Lock()
-			running := len(conn.tasks)
-			maxP := conn.maxParallel
-			s.mu.Unlock()
-			for running < maxP {
+			running, err := s.q.LeasedCount(ctx, conn.id)
+			if err != nil {
+				s.log.Warn("count leased", "worker", conn.id, "err", err)
+				continue
+			}
+			for running < conn.maxParallel {
 				task, err := s.q.Lease(ctx, conn.id)
 				if errors.Is(err, queue.ErrNoTask) {
 					break
@@ -461,10 +518,7 @@ func (s *Server) dispatchLoop(ctx context.Context, conn *workerConn) {
 					}, s.log)
 					break
 				}
-				s.mu.Lock()
-				conn.tasks[task.ID] = struct{}{}
-				running = len(conn.tasks)
-				s.mu.Unlock()
+				running++
 				if !conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Task{Task: protoTask}}) {
 					return
 				}
@@ -551,13 +605,36 @@ func (s *Server) registerWorker(conn *workerConn) {
 	s.workers[conn.id] = conn
 }
 
-func (s *Server) unregisterWorker(conn *workerConn) {
+// unregisterWorker reports whether conn was still the worker's current
+// stream (a reconnect may already have replaced it).
+func (s *Server) unregisterWorker(conn *workerConn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.workers[conn.id] == conn { // a reconnect may already have replaced us
-		delete(s.workers, conn.id)
-	}
 	close(conn.done)
+	if s.workers[conn.id] != conn {
+		return false
+	}
+	delete(s.workers, conn.id)
+	return true
+}
+
+// releaseTasks requeues what a disconnected worker held. send_video stays
+// leased until its lease expires: the worker keeps running it and delivers
+// the result when it reconnects.
+func (s *Server) releaseTasks(workerID string, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	released, failed, err := s.q.ReleaseWorker(ctx, workerID, queue.KindSendVideo)
+	if err != nil {
+		log.Warn("release tasks of disconnected worker", "err", err)
+		return
+	}
+	if released+len(failed) > 0 {
+		log.Info("tasks of disconnected worker released", "requeued", released, "failed", len(failed))
+	}
+	for _, id := range failed {
+		s.notifyIfFailed(ctx, id, log)
+	}
 }
 
 // SendConfig pushes a fresh Config to a connected worker (after settings
@@ -636,6 +713,18 @@ func (s *Server) leaseRecoveryLoop(ctx context.Context) {
 			}
 			for _, id := range failed {
 				s.notifyIfFailed(ctx, id, s.log)
+			}
+			if len(s.ConnectedWorkers()) == 0 {
+				expired, err := s.q.ExpireQueued(ctx, s.now().Add(-queuedTimeout))
+				if err != nil {
+					s.log.Warn("expire queued tasks", "err", err)
+				}
+				for _, id := range expired {
+					s.notifyIfFailed(ctx, id, s.log)
+				}
+				if len(expired) > 0 {
+					s.log.Warn("tasks failed: no worker connected", "count", len(expired))
+				}
 			}
 		}
 	}

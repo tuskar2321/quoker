@@ -312,3 +312,25 @@ func TestGetTask_resolveResult(t *testing.T) {
 		t.Fatalf("expected video tiktok:88, got %v", v)
 	}
 }
+
+// TestResolve_answersBeforeRequestDeadline: the wait must end before the
+// request's own timeout so the client gets 202 with the task id (REVIEW H1).
+func TestResolve_answersBeforeRequestDeadline(t *testing.T) {
+	st, err := store.Open(context.Background(), t.TempDir()+"/q.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	svc := videos.New(st, queue.New(st, nil), nil) // default 15 s wait
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	res, err := svc.Resolve(ctx, "https://vm.tiktok.com/ZMabc/", 0)
+	if err != nil || res.TaskID == "" || res.Video != nil {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if took := time.Since(start); took > 2*time.Second || ctx.Err() != nil {
+		t.Fatalf("returned after %s, ctx err %v: no time left to answer", took, ctx.Err())
+	}
+}

@@ -32,6 +32,7 @@ type testFixture struct {
 	set     *settings.Store
 
 	lastConfig *linkv1.Config
+	stopServer context.CancelFunc
 }
 
 // fakeUpdates counts handled bot updates.
@@ -102,11 +103,13 @@ func newTestFixture(t *testing.T) *testFixture {
 	log := slog.New(slog.NewTextHandler(nil, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	srvCtx, stopServer := context.WithCancel(context.Background())
+	t.Cleanup(stopServer)
 
 	results := &fakeResults{}
 	updates := &fakeUpdates{}
 	set := settings.New(st.DB(), nowFn)
-	srv := New(ctx, Deps{
+	srv := New(srvCtx, Deps{
 		Store:    st,
 		Queue:    q,
 		Settings: set,
@@ -142,11 +145,12 @@ func newTestFixture(t *testing.T) *testFixture {
 	return &testFixture{
 		t: t, ctx: ctx, cancel: cancel,
 		srv: srv, q: q,
-		stub:    linkv1.NewLinkServiceClient(cc),
-		now:     now,
-		results: results,
-		updates: updates,
-		set:     set,
+		stub:       linkv1.NewLinkServiceClient(cc),
+		now:        now,
+		results:    results,
+		updates:    updates,
+		set:        set,
+		stopServer: stopServer,
 	}
 }
 
@@ -408,5 +412,111 @@ func TestPurgeUpdates(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != 2 {
 		t.Fatalf("left = %v", ids)
+	}
+}
+
+// TestCoreShutdownClosesStreams: stopping the core sends Shutdown and ends
+// every stream, so grpc.Server.GracefulStop can return (REVIEW H3).
+func TestCoreShutdownClosesStreams(t *testing.T) {
+	f := newTestFixture(t)
+	stream := f.connect("worker-1")
+	f.stopServer()
+	var reason string
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		if sd := msg.GetShutdown(); sd != nil {
+			reason = sd.Reason
+		}
+	}
+	if reason != ShutdownCoreStopping {
+		t.Fatalf("shutdown reason = %q", reason)
+	}
+}
+
+// recvTask reads messages until a Task arrives.
+func recvTask(t *testing.T, stream linkv1.LinkService_ConnectClient) *linkv1.Task {
+	t.Helper()
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task := msg.GetTask(); task != nil {
+			return task
+		}
+	}
+}
+
+func waitStatus(t *testing.T, f *testFixture, id string, want queue.Status) *queue.Task {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := f.q.Get(f.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == want {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s status = %s, want %s", id, got.Status, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestDisconnectReleasesTasks: a dropped stream gives resolve back to the
+// queue at once, but keeps send_video with the worker (REVIEW H6).
+func TestDisconnectReleasesTasks(t *testing.T) {
+	f := newTestFixture(t)
+	resolvePayload, _ := marshalProto(&linkv1.ResolveTask{Url: "u"})
+	sendPayload, _ := marshalProto(&linkv1.SendVideoTask{VideoId: "tiktok:1"})
+	resolveID, _ := f.q.Enqueue(f.ctx, queue.EnqueueParams{Kind: queue.KindResolve, Payload: resolvePayload})
+	sendID, _ := f.q.Enqueue(f.ctx, queue.EnqueueParams{Kind: queue.KindSendVideo, Payload: sendPayload})
+
+	streamCtx, drop := context.WithCancel(f.ctx)
+	md := metadata.Pairs("x-client-cert-fingerprint", "fp-worker-1", "x-client-cert-cn", "worker-1")
+	stream, err := f.stub.Connect(metadata.NewOutgoingContext(streamCtx, md))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_Hello{Hello: &linkv1.Hello{WorkerId: "worker-1", MaxParallel: 2}}})
+	recvTask(t, stream)
+	recvTask(t, stream)
+	drop()
+
+	waitStatus(t, f, resolveID, queue.StatusQueued)
+	if got, _ := f.q.Get(f.ctx, sendID); got.Status != queue.StatusLeased {
+		t.Fatalf("send_video = %s, want still leased", got.Status)
+	}
+}
+
+// TestLateSendResultAccepted: a send_video result that arrives after the
+// task was requeued still counts, so the video is not posted twice (REVIEW H5).
+func TestLateSendResultAccepted(t *testing.T) {
+	f := newTestFixture(t)
+	payload, _ := marshalProto(&linkv1.SendVideoTask{VideoId: "tiktok:1"})
+	id, _ := f.q.Enqueue(f.ctx, queue.EnqueueParams{Kind: queue.KindSendVideo, Payload: payload})
+	if _, err := f.q.Lease(f.ctx, "worker-old"); err != nil {
+		t.Fatal(err)
+	}
+	// The lease expired and the task went back to the queue.
+	if _, err := f.srv.st.DB().ExecContext(f.ctx,
+		`UPDATE tasks SET status = 'queued', worker_id = NULL, not_before = ? WHERE id = ?`,
+		f.now.Add(time.Hour).UnixMilli(), id); err != nil {
+		t.Fatal(err)
+	}
+	stream := f.connect("worker-1")
+	if err := stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_TaskResult{TaskResult: &linkv1.TaskResult{
+		TaskId: id, Result: &linkv1.TaskResult_SendVideo{SendVideo: &linkv1.SendVideoResult{MessageId: 7}},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, f, id, queue.StatusDone)
+	if ok, _ := f.results.snapshot(); len(ok) != 1 || ok[0] != id {
+		t.Fatalf("TaskSucceeded calls = %v", ok)
 	}
 }

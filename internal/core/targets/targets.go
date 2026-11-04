@@ -52,9 +52,10 @@ type Target struct {
 
 // Service provides target operations.
 type Service struct {
-	st  *store.Store
-	now func() time.Time
-	bot BotCaller // nil skips rights checks
+	st         *store.Store
+	now        func() time.Time
+	bot        BotCaller // nil skips rights checks
+	rightsWait time.Duration
 }
 
 // BotCaller runs a Bot API method on a worker and returns its result.
@@ -73,7 +74,13 @@ func New(st *store.Store, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{st: st, now: now}
+	return &Service{st: st, now: now, rightsWait: DefaultRightsWait}
+}
+
+// WithRightsWait overrides the getChatMember budget (for tests).
+func (s *Service) WithRightsWait(d time.Duration) *Service {
+	s.rightsWait = d
+	return s
 }
 
 // List returns all targets for userID. By default hidden targets are excluded;
