@@ -96,7 +96,7 @@ func TestPrepareAndServe(t *testing.T) {
 		t.Fatalf("downloaded: %d %s", r.status, r.raw)
 	}
 	var n int
-	_ = e.st.DB().QueryRow(`SELECT COUNT(*) FROM history WHERE video_id = 'tiktok:1' AND action = 'downloaded'`).Scan(&n)
+	_ = e.st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM history WHERE video_id = 'tiktok:1' AND action = 'downloaded'`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("history rows = %d", n)
 	}

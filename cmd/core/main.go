@@ -39,6 +39,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/history"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
 	corelink "github.com/tuskar2321/quoker/internal/core/link"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/results"
@@ -188,6 +189,10 @@ func serve(cfg config.Config) error {
 	defer func() { _ = st.Close() }()
 	log.Info("database ready", "path", cfg.DBPath)
 
+	trusted, err := proxy.Parse(cfg.TrustedProxies)
+	if err != nil {
+		return err
+	}
 	set := settings.New(st.DB(), nil)
 	q := queue.New(st, nil)
 	videosSvc := videos.New(st, q, nil)
@@ -218,6 +223,7 @@ func serve(cfg config.Config) error {
 		Results:    results.New(videosSvc, sendsSvc, cache),
 		Updates:    corelink.UpdateFunc(func(ctx context.Context, u []byte) error { return botHandler.HandleUpdate(ctx, u) }),
 		UploadBase: cfg.UploadBase,
+		Trusted:    &trusted,
 		Log:        log.With("component", "link"),
 	})
 	adminSvc := admin.New(admin.Deps{
@@ -259,6 +265,7 @@ func serve(cfg config.Config) error {
 			History:   historySvc,
 			Releases:  releasesSvc,
 			PublicURL: cfg.PublicURL,
+			Trusted:   trusted,
 			Admin:     adminSvc,
 			Store:     st,
 			Version:   version,
@@ -282,7 +289,7 @@ func serve(cfg config.Config) error {
 	// Worker uploads; reachable only through Caddy's mTLS listener.
 	filesSrv := &http.Server{
 		Addr:              cfg.FilesAddr,
-		Handler:           cache.InternalHandler(linkSrv.VerifyWorker, log.With("component", "files")),
+		Handler:           cache.InternalHandler(linkSrv.VerifyWorker, trusted, log.With("component", "files")),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),

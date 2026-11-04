@@ -19,6 +19,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/history"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/sends"
@@ -71,6 +72,7 @@ func newEnv(t *testing.T) *env {
 		Files:    e.files,
 		History:  history.New(st, clock),
 		Releases: e.releases,
+		Trusted:  proxy.Default(),
 		Store:    st,
 		Version:  "test",
 		Admin: admin.New(admin.Deps{

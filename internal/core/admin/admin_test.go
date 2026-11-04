@@ -69,7 +69,7 @@ func newEnv(t *testing.T) *env {
 // messages returns the texts queued for the admin chat.
 func (e *env) messages() []string {
 	e.t.Helper()
-	rows, err := e.st.DB().Query(`SELECT payload FROM tasks WHERE kind = 'bot_call' ORDER BY created_at`)
+	rows, err := e.st.DB().QueryContext(context.Background(), `SELECT payload FROM tasks WHERE kind = 'bot_call' ORDER BY created_at`)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func (e *env) finished(url, code string) {
 		status = "failed"
 	}
 	ms := e.now.UnixMilli()
-	if _, err := e.st.DB().Exec(
+	if _, err := e.st.DB().ExecContext(context.Background(),
 		`INSERT INTO tasks (id, kind, payload, status, priority, max_attempts, error_code, not_before, created_at, updated_at)
 		 VALUES (lower(hex(randomblob(8))), 'resolve', ?, ?, 20, 3, NULLIF(?, ''), ?, ?, ?)`,
 		payload, status, code, ms, ms, ms); err != nil {

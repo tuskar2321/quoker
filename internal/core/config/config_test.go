@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 )
 
 func TestLoad(t *testing.T) {
@@ -16,25 +18,26 @@ func TestLoad(t *testing.T) {
 			name: "defaults",
 			env:  map[string]string{"DB_PATH": "/data/quoker.db"},
 			want: Config{DBPath: "/data/quoker.db", HTTPAddr: ":8080", FilesAddr: ":8081", GRPCAddr: ":9090",
-				CacheDir: "./cache", CacheMaxBytes: 3 << 30, ReleasesDir: "./releases", LogLevel: "info"},
+				CacheDir: "./cache", CacheMaxBytes: 3 << 30, ReleasesDir: "./releases", LogLevel: "info", TrustedProxies: proxy.DefaultTrusted},
 		},
 		{
 			name: "overrides",
 			env: map[string]string{"DB_PATH": "q.db", "HTTP_ADDR": "127.0.0.1:9000", "FILES_ADDR": "127.0.0.1:9001",
 				"GRPC_ADDR": "127.0.0.1:9091", "CACHE_DIR": "/cache", "CACHE_MAX_BYTES": "1000",
 				"UPLOAD_BASE": "http://127.0.0.1:9001/internal/v1", "DOMAIN": "ignored.example", "LOG_LEVEL": "debug",
-				"RELEASES_DIR": "/releases", "PUBLIC_URL": "http://127.0.0.1:9000/"},
+				"RELEASES_DIR": "/releases", "PUBLIC_URL": "http://127.0.0.1:9000/", "TRUSTED_PROXIES": "172.18.0.0/16"},
 			want: Config{DBPath: "q.db", HTTPAddr: "127.0.0.1:9000", FilesAddr: "127.0.0.1:9001", GRPCAddr: "127.0.0.1:9091",
 				CacheDir: "/cache", CacheMaxBytes: 1000, UploadBase: "http://127.0.0.1:9001/internal/v1", LogLevel: "debug",
-				ReleasesDir: "/releases", PublicURL: "http://127.0.0.1:9000"},
+				ReleasesDir: "/releases", PublicURL: "http://127.0.0.1:9000", TrustedProxies: "172.18.0.0/16"},
 		},
 		{
 			name: "upload base from domain",
 			env:  map[string]string{"DB_PATH": "q.db", "DOMAIN": "quoker.example"},
 			want: Config{DBPath: "q.db", HTTPAddr: ":8080", FilesAddr: ":8081", GRPCAddr: ":9090", CacheDir: "./cache",
 				CacheMaxBytes: 3 << 30, UploadBase: "https://w.quoker.example/internal/v1", LogLevel: "info",
-				ReleasesDir: "./releases", PublicURL: "https://api.quoker.example"},
+				ReleasesDir: "./releases", PublicURL: "https://api.quoker.example", TrustedProxies: proxy.DefaultTrusted},
 		},
+		{name: "bad trusted proxies", env: map[string]string{"DB_PATH": "q.db", "TRUSTED_PROXIES": "nonsense"}, wantErr: "trusted proxy"},
 		{name: "bad cache size", env: map[string]string{"DB_PATH": "q.db", "CACHE_MAX_BYTES": "lots"}, wantErr: "CACHE_MAX_BYTES"},
 		{name: "missing db path", env: map[string]string{}, wantErr: "DB_PATH is required"},
 		{name: "bad http addr", env: map[string]string{"DB_PATH": "q.db", "HTTP_ADDR": "8080"}, wantErr: "HTTP_ADDR"},

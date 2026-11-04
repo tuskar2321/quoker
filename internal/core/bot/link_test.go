@@ -2,13 +2,16 @@ package bot_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
+	"github.com/tuskar2321/quoker/internal/core/targets"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
@@ -316,5 +319,73 @@ func TestUnlinkTelegram(t *testing.T) {
 	}
 	if activeTargets != 0 {
 		t.Fatalf("expected 0 active targets after unlink, got %d", activeTargets)
+	}
+}
+
+// TestRelinkToAnotherTelegram: the old account's bot chat stops receiving
+// videos and rights are checked again for the new account (REVIEW M12).
+func TestRelinkToAnotherTelegram(t *testing.T) {
+	st, set := openTest(t)
+	clk := &fakeClock{t: time.Now()}
+	svc := bot.New(st, set, clk.Now)
+	ctx := context.Background()
+	if err := set.Set(ctx, settings.BotUsername, "QuokerBot"); err != nil {
+		t.Fatal(err)
+	}
+	uid := insertUser(t, st, clk.Now())
+	link := func(tg int64) {
+		t.Helper()
+		info, err := svc.CreateLinkToken(ctx, uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token := info.DeepLink[strings.Index(info.DeepLink, "link_")+len("link_"):]
+		if _, err := svc.ConsumeLinkToken(ctx, token, tg, "u", "U"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link(100)
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO targets (owner_user_id, chat_id, type, title, status, rights_checked_at, created_at, updated_at)
+		 VALUES (?, -5, 'group', 'G', 'active', ?, 0, 0)`, uid, clk.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	link(200)
+
+	var oldStatus, newStatus string
+	_ = st.DB().QueryRowContext(ctx, `SELECT status FROM targets WHERE owner_user_id = ? AND chat_id = 100`, uid).Scan(&oldStatus)
+	_ = st.DB().QueryRowContext(ctx, `SELECT status FROM targets WHERE owner_user_id = ? AND chat_id = 200`, uid).Scan(&newStatus)
+	if oldStatus != "inactive" || newStatus != "active" {
+		t.Fatalf("old bot chat = %q, new = %q", oldStatus, newStatus)
+	}
+	var checked sql.NullInt64
+	_ = st.DB().QueryRowContext(ctx, `SELECT rights_checked_at FROM targets WHERE chat_id = -5`).Scan(&checked)
+	if checked.Valid {
+		t.Fatal("rights cache kept across accounts")
+	}
+}
+
+// TestUnlinkIsNotUndoneByBot: unlinking uses a reason ReactivateBot leaves
+// alone (REVIEW M13).
+func TestUnlinkIsNotUndoneByBot(t *testing.T) {
+	st, set := openTest(t)
+	clk := &fakeClock{t: time.Now()}
+	svc := bot.New(st, set, clk.Now)
+	ctx := context.Background()
+	uid := insertUser(t, st, clk.Now())
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO targets (owner_user_id, chat_id, type, title, status, created_at, updated_at) VALUES (?, -5, 'group', 'G', 'active', 0, 0)`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UnlinkTelegram(ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+	if err := targets.New(st, nil).ReactivateBot(ctx, -5); err != nil {
+		t.Fatal(err)
+	}
+	var status, reason string
+	_ = st.DB().QueryRowContext(ctx, `SELECT status, inactive_reason FROM targets WHERE chat_id = -5`).Scan(&status, &reason)
+	if status != "inactive" || reason != "user_left" {
+		t.Fatalf("target after unlink and bot re-add = %s/%s", status, reason)
 	}
 }

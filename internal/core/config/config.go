@@ -8,6 +8,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 )
 
 // Config is the core runtime configuration.
@@ -25,21 +27,25 @@ type Config struct {
 	// https://w.<DOMAIN>/internal/v1 when only DOMAIN is set.
 	UploadBase string
 	LogLevel   string // LOG_LEVEL, default info
+	// TrustedProxies are the CIDRs allowed to send X-Client-Cert-* and
+	// X-Forwarded-For: TRUSTED_PROXIES, default loopback and private ranges.
+	TrustedProxies string
 }
 
 // Load reads the configuration using getenv (os.Getenv in production).
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{
-		DBPath:        getenv("DB_PATH"),
-		HTTPAddr:      or(getenv("HTTP_ADDR"), ":8080"),
-		FilesAddr:     or(getenv("FILES_ADDR"), ":8081"),
-		GRPCAddr:      or(getenv("GRPC_ADDR"), ":9090"),
-		CacheDir:      or(getenv("CACHE_DIR"), "./cache"),
-		CacheMaxBytes: 3 << 30,
-		ReleasesDir:   or(getenv("RELEASES_DIR"), "./releases"),
-		PublicURL:     strings.TrimRight(getenv("PUBLIC_URL"), "/"),
-		UploadBase:    getenv("UPLOAD_BASE"),
-		LogLevel:      or(getenv("LOG_LEVEL"), "info"),
+		DBPath:         getenv("DB_PATH"),
+		HTTPAddr:       or(getenv("HTTP_ADDR"), ":8080"),
+		FilesAddr:      or(getenv("FILES_ADDR"), ":8081"),
+		GRPCAddr:       or(getenv("GRPC_ADDR"), ":9090"),
+		CacheDir:       or(getenv("CACHE_DIR"), "./cache"),
+		CacheMaxBytes:  3 << 30,
+		ReleasesDir:    or(getenv("RELEASES_DIR"), "./releases"),
+		PublicURL:      strings.TrimRight(getenv("PUBLIC_URL"), "/"),
+		UploadBase:     getenv("UPLOAD_BASE"),
+		LogLevel:       or(getenv("LOG_LEVEL"), "info"),
+		TrustedProxies: or(getenv("TRUSTED_PROXIES"), proxy.DefaultTrusted),
 	}
 	if d := getenv("DOMAIN"); d != "" {
 		if c.UploadBase == "" {
@@ -57,6 +63,9 @@ func Load(getenv func(string) string) (Config, error) {
 		if _, _, err := net.SplitHostPort(addr); err != nil {
 			errs = append(errs, fmt.Errorf("%s %q: %w", name, addr, err))
 		}
+	}
+	if _, err := proxy.Parse(c.TrustedProxies); err != nil {
+		errs = append(errs, err)
 	}
 	if s := getenv("CACHE_MAX_BYTES"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)

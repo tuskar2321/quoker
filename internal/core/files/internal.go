@@ -10,6 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/tuskar2321/quoker/internal/core/proxy"
+
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
 
@@ -22,10 +24,17 @@ type VerifyWorker func(ctx context.Context, fingerprint string) (workerID string
 // InternalHandler serves the worker upload endpoints on the internal port
 // (docs/04-core-worker-protocol.md). It must never be exposed directly: it
 // trusts the fingerprint header, which only Caddy may set.
-func (s *Store) InternalHandler(verify VerifyWorker, log *slog.Logger) http.Handler {
+func (s *Store) InternalHandler(verify VerifyWorker, trusted proxy.Trusted, log *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !trusted.Contains(r.RemoteAddr) {
+				// Only Caddy, after checking the client certificate, may
+				// vouch for a worker; a direct caller could forge the header.
+				log.Warn("upload from untrusted peer rejected", "peer", r.RemoteAddr)
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 			fp := r.Header.Get(HeaderFingerprint)
 			workerID, err := verify(r.Context(), fp)
 			if fp == "" || err != nil {

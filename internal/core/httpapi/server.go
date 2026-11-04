@@ -16,6 +16,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/history"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
 	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/sends"
@@ -49,13 +50,15 @@ type Deps struct {
 	Releases *releases.Store
 	// PublicURL prefixes apk_url; empty derives it from the request.
 	PublicURL string
-	Admin     *admin.Service
-	Store     *store.Store // read-only queries for admin status
-	Settings  *settings.Store
-	Version   string                      // core build version
-	Ready     func(context.Context) error // /readyz probe
-	Log       *slog.Logger
-	Now       func() time.Time // defaults to time.Now
+	// Trusted are the proxies whose X-Forwarded-For is believed.
+	Trusted  proxy.Trusted
+	Admin    *admin.Service
+	Store    *store.Store // read-only queries for admin status
+	Settings *settings.Store
+	Version  string                      // core build version
+	Ready    func(context.Context) error // /readyz probe
+	Log      *slog.Logger
+	Now      func() time.Time // defaults to time.Now
 }
 
 type server struct {
@@ -68,6 +71,7 @@ type server struct {
 	history   *history.Service
 	releases  *releases.Store
 	publicURL string
+	trusted   proxy.Trusted
 	admin     *admin.Service
 	st        *store.Store
 	version   string
@@ -94,6 +98,7 @@ func New(d Deps) http.Handler {
 		history:   d.History,
 		releases:  d.Releases,
 		publicURL: d.PublicURL,
+		trusted:   d.Trusted,
 		admin:     d.Admin,
 		st:        d.Store,
 		version:   d.Version,

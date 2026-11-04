@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
@@ -518,5 +521,68 @@ func TestLateSendResultAccepted(t *testing.T) {
 	waitStatus(t, f, id, queue.StatusDone)
 	if ok, _ := f.results.snapshot(); len(ok) != 1 || ok[0] != id {
 		t.Fatalf("TaskSucceeded calls = %v", ok)
+	}
+}
+
+// TestRevokeClosesStream: the core ends the stream itself, so a worker that
+// ignores Shutdown is still cut off (REVIEW H4).
+func TestRevokeClosesStream(t *testing.T) {
+	f := newTestFixture(t)
+	stream := f.connect("worker-1")
+	if err := f.srv.Shutdown(f.ctx, "worker-1", ShutdownRevoked); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		_, err := stream.Recv() // a malicious worker would just keep reading
+		if err == nil {
+			continue
+		}
+		if status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("stream ended with %v, want PermissionDenied", err)
+		}
+		break
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(f.srv.ConnectedWorkers()) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("revoked worker still registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestUntrustedPeerRejected: certificate headers count only from Caddy's
+// network; a direct caller cannot pose as a worker (REVIEW L5).
+func TestUntrustedPeerRejected(t *testing.T) {
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "q.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	_, _ = st.DB().ExecContext(context.Background(),
+		`INSERT INTO workers (id, fingerprint, status, created_at) VALUES ('worker-1', 'fp-worker-1', 'allowed', 0)`)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	onlyCaddy, _ := proxy.Parse("10.9.0.0/16") // the test client comes from 127.0.0.1
+	srv := New(ctx, Deps{Store: st, Queue: queue.New(st, nil), Settings: settings.New(st.DB(), nil), Trusted: &onlyCaddy})
+	lis, _ := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
+	gs := grpc.NewServer()
+	linkv1.RegisterLinkServiceServer(gs, srv)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.Stop()
+	cc, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cc.Close() }()
+
+	md := metadata.Pairs("x-client-cert-fingerprint", "fp-worker-1", "x-client-cert-cn", "worker-1")
+	stream, err := linkv1.NewLinkServiceClient(cc).Connect(metadata.NewOutgoingContext(ctx, md))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_Hello{Hello: &linkv1.Hello{WorkerId: "worker-1"}}})
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("err = %v, want Unauthenticated", err)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 )
@@ -193,14 +194,25 @@ func requireAdmin(next http.Handler) http.Handler {
 
 // clientIP returns the caller address. The API port is reachable only from
 // Caddy (docs/10-deploy.md), which sets X-Forwarded-For to the real client.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		return strings.TrimSpace(first)
-	}
+// clientIP is the address the request came from. X-Forwarded-For counts only
+// when the direct peer is a trusted proxy (Caddy). Walking it from the right,
+// trusted hops are skipped and the first untrusted address is the client;
+// anything further left is whatever the client chose to send.
+func clientIP(r *http.Request, trusted proxy.Trusted) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" || !trusted.Contains(r.RemoteAddr) {
+		return host
+	}
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		hop := strings.TrimSpace(parts[i])
+		if hop != "" && !trusted.Contains(hop) {
+			return hop
+		}
+	}
+	return strings.TrimSpace(parts[0])
 }

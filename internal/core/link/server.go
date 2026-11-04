@@ -15,10 +15,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
@@ -67,15 +69,23 @@ type Deps struct {
 	Settings *settings.Store
 	Results  ResultHandler // nil ignores results
 	Updates  UpdateHandler // nil drops bot updates
+	// Trusted are the peers allowed to pass certificate headers (Caddy);
+	// nil means proxy.Default.
+	Trusted *proxy.Trusted
 	// UploadBase is sent to workers as Config.upload_base.
 	UploadBase string
 	Log        *slog.Logger
 	Now        func() time.Time
 }
 
-// ShutdownCoreStopping is the Shutdown reason sent when the core stops; the
-// worker finishes its tasks and reconnects later.
-const ShutdownCoreStopping = "core_stopping"
+// Shutdown reasons.
+const (
+	// ShutdownCoreStopping: the core stops; the worker keeps its tasks and
+	// reconnects later.
+	ShutdownCoreStopping = "core_stopping"
+	// ShutdownRevoked: the worker was revoked and must not reconnect.
+	ShutdownRevoked = "revoked"
+)
 
 // UpdateHandler processes one Telegram update forwarded by the poller.
 type UpdateHandler interface {
@@ -98,6 +108,7 @@ type Server struct {
 	set     *settings.Store
 	results ResultHandler
 	updates UpdateHandler
+	trusted proxy.Trusted
 	upload  string
 	log     *slog.Logger
 	now     func() time.Time
@@ -122,12 +133,17 @@ func New(ctx context.Context, d Deps) *Server {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
+	if d.Trusted == nil {
+		def := proxy.Default()
+		d.Trusted = &def
+	}
 	srv := &Server{
 		st:       d.Store,
 		q:        d.Queue,
 		set:      d.Settings,
 		results:  d.Results,
 		updates:  d.Updates,
+		trusted:  *d.Trusted,
 		upload:   d.UploadBase,
 		log:      d.Log,
 		now:      d.Now,
@@ -149,6 +165,7 @@ type workerConn struct {
 	out         chan *linkv1.CoreMessage
 	maxParallel int
 	done        chan struct{} // closed when the stream ends
+	closeReq    chan string   // Shutdown reason; Connect sends it and ends the stream
 }
 
 // send queues msg; it reports false once the stream has ended.
@@ -195,6 +212,7 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 		out:         make(chan *linkv1.CoreMessage, 32),
 		maxParallel: maxParallel,
 		done:        make(chan struct{}),
+		closeReq:    make(chan string, 1),
 	}
 	s.registerWorker(conn)
 	defer func() {
@@ -262,15 +280,14 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 			log.Warn("heartbeat timeout, closing stream")
 			return status.Error(codes.DeadlineExceeded, "heartbeat timeout")
 		case <-s.stopping:
-			stopSender()
-			if err := <-sendErr; err != nil {
-				log.Debug("sender stopped with error", "err", err)
-			}
-			_ = stream.Send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Shutdown{
-				Shutdown: &linkv1.Shutdown{Reason: ShutdownCoreStopping},
-			}})
-			log.Info("stream closed: core is shutting down")
+			s.endStream(stream, stopSender, sendErr, ShutdownCoreStopping, log)
 			return status.Error(codes.Unavailable, "core is shutting down")
+		case reason := <-conn.closeReq:
+			s.endStream(stream, stopSender, sendErr, reason, log)
+			if reason == ShutdownRevoked {
+				return status.Error(codes.PermissionDenied, "worker revoked")
+			}
+			return status.Error(codes.Unavailable, "stream closed by core: "+reason)
 		case r := <-recvCh:
 			if r.err != nil {
 				return r.err
@@ -688,11 +705,27 @@ func (s *Server) CancelTask(workerID, taskID string) {
 }
 
 // Shutdown asks a worker to finish its tasks and exit.
+// The stream is closed by the core itself, so a worker that ignores the
+// message (a revoked or compromised one) is cut off anyway.
 func (s *Server) Shutdown(_ context.Context, workerID, reason string) error {
 	if conn, ok := s.conn(workerID); ok {
-		conn.send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Shutdown{Shutdown: &linkv1.Shutdown{Reason: reason}}})
+		select {
+		case conn.closeReq <- reason:
+		default: // already closing
+		}
 	}
 	return nil
+}
+
+// endStream stops the sender, writes the final Shutdown itself and lets
+// Connect return, which drops the stream.
+func (s *Server) endStream(stream linkv1.LinkService_ConnectServer, stopSender context.CancelFunc, sendErr <-chan error, reason string, log *slog.Logger) {
+	stopSender()
+	if err := <-sendErr; err != nil {
+		log.Debug("sender stopped with error", "err", err)
+	}
+	_ = stream.Send(&linkv1.CoreMessage{Msg: &linkv1.CoreMessage_Shutdown{Shutdown: &linkv1.Shutdown{Reason: reason}}})
+	log.Info("stream closed by core", "reason", reason)
 }
 
 func (s *Server) leaseRecoveryLoop(ctx context.Context) {
@@ -760,6 +793,10 @@ func (s *Server) updateWorkerSeen(ctx context.Context, workerID string, hello *l
 // certInfo extracts the client cert fingerprint and CN from gRPC metadata.
 // In production these are injected by Caddy; in tests they can be set directly.
 func (s *Server) certInfo(ctx context.Context) (fingerprint, cn string, err error) {
+	// The headers are only as good as whoever set them: Caddy after mTLS.
+	if p, ok := peer.FromContext(ctx); !ok || !s.trusted.Contains(p.Addr.String()) {
+		return "", "", fmt.Errorf("certificate headers from untrusted peer")
+	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return "", "", fmt.Errorf("missing metadata")

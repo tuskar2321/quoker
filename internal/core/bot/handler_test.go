@@ -116,7 +116,7 @@ type sent struct {
 // outbox lists queued bot_call tasks in order.
 func (e *env) outbox() []sent {
 	e.t.Helper()
-	rows, err := e.st.DB().Query(`SELECT payload FROM tasks WHERE kind = 'bot_call' ORDER BY created_at, id`)
+	rows, err := e.st.DB().QueryContext(context.Background(), `SELECT payload FROM tasks WHERE kind = 'bot_call' ORDER BY created_at, id`)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func (e *env) lastText() string {
 func TestLinkFlow(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	res, _ := e.st.DB().Exec(`INSERT INTO users (role, status, created_at) VALUES ('admin', 'active', 0)`)
+	res, _ := e.st.DB().ExecContext(context.Background(), `INSERT INTO users (role, status, created_at) VALUES ('admin', 'active', 0)`)
 	uid, _ := res.LastInsertId()
 	info, err := e.link.CreateLinkToken(ctx, uid)
 	if err != nil {
@@ -192,7 +192,7 @@ func TestLinkTakenAndStrangers(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	e.user(accounts.RoleUser, 700, "taken")
-	res, _ := e.st.DB().Exec(`INSERT INTO users (role, status, created_at) VALUES ('user', 'active', 0)`)
+	res, _ := e.st.DB().ExecContext(context.Background(), `INSERT INTO users (role, status, created_at) VALUES ('user', 'active', 0)`)
 	other, _ := res.LastInsertId()
 	info, _ := e.link.CreateLinkToken(ctx, other)
 	token := info.DeepLink[strings.Index(info.DeepLink, "link_")+len("link_"):]

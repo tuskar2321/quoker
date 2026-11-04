@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/files"
+	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/store"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
 	"github.com/tuskar2321/quoker/internal/worker/upload"
@@ -132,7 +133,7 @@ func TestPutThumb(t *testing.T) {
 		t.Fatal(err)
 	}
 	var has int
-	_ = e.st.DB().QueryRow(`SELECT has_thumbnail FROM videos WHERE id = 'tiktok:1'`).Scan(&has)
+	_ = e.st.DB().QueryRowContext(context.Background(), `SELECT has_thumbnail FROM videos WHERE id = 'tiktok:1'`).Scan(&has)
 	if has != 1 {
 		t.Fatal("has_thumbnail not set")
 	}
@@ -148,7 +149,7 @@ func TestUploadContract(t *testing.T) {
 		}
 		return "worker-1", nil
 	}
-	h := e.fs.InternalHandler(verify, quiet)
+	h := e.fs.InternalHandler(verify, proxy.Default(), quiet)
 	var cut atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set(files.HeaderFingerprint, "fp-ok") // what Caddy adds
@@ -183,9 +184,10 @@ func TestUploadContract(t *testing.T) {
 
 func TestInternalHandler_rejectsUnknownWorker(t *testing.T) {
 	e := newEnv(t, 1<<20)
-	h := e.fs.InternalHandler(func(context.Context, string) (string, error) { return "", errors.New("unknown") }, quiet)
+	h := e.fs.InternalHandler(func(context.Context, string) (string, error) { return "", errors.New("unknown") }, proxy.Default(), quiet)
 	for _, fp := range []string{"", "fp-bad"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/internal/v1/thumbs/tiktok:1", strings.NewReader("x"))
+		req.RemoteAddr = "172.18.0.2:5000" // Caddy on the docker network
 		if fp != "" {
 			req.Header.Set(files.HeaderFingerprint, fp)
 		}
@@ -195,13 +197,25 @@ func TestInternalHandler_rejectsUnknownWorker(t *testing.T) {
 			t.Fatalf("fingerprint %q: status %d", fp, rec.Code)
 		}
 	}
-	ok := e.fs.InternalHandler(func(context.Context, string) (string, error) { return "w", nil }, quiet)
+	ok := e.fs.InternalHandler(func(context.Context, string) (string, error) { return "w", nil }, proxy.Default(), quiet)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodHead, "/internal/v1/files/..%2Fetc", nil)
 	req.Header.Set(files.HeaderFingerprint, "fp")
+	req.RemoteAddr = "172.18.0.2:5000"
 	rec := httptest.NewRecorder()
 	ok.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad id: status %d", rec.Code)
+	}
+
+	// A valid fingerprint from outside the trusted networks is a forgery:
+	// only Caddy may set the header (REVIEW L5).
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/internal/v1/thumbs/tiktok:1", strings.NewReader("x"))
+	req.Header.Set(files.HeaderFingerprint, "fp")
+	req.RemoteAddr = "203.0.113.9:4444"
+	rec = httptest.NewRecorder()
+	ok.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("untrusted peer: status %d", rec.Code)
 	}
 }
 
@@ -225,7 +239,7 @@ func TestCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	_ = e.st.DB().QueryRow(`SELECT COUNT(*) FROM videos WHERE id = 'tiktok:old'`).Scan(&n)
+	_ = e.st.DB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM videos WHERE id = 'tiktok:old'`).Scan(&n)
 	if n != 0 || e.fs.HasFile("tiktok:old") {
 		t.Fatal("expired video or its file survived")
 	}

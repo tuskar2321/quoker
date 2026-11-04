@@ -152,7 +152,8 @@ func (s *Service) TelegramLinkStatus(ctx context.Context, userID int64) (LinkSta
 }
 
 // UnlinkTelegram removes the Telegram binding from a user and deactivates all
-// their targets.
+// their targets. The reason is user_left, not bot_removed: re-adding the bot
+// to a chat must not revive targets of someone who unlinked.
 func (s *Service) UnlinkTelegram(ctx context.Context, userID int64) error {
 	now := s.now()
 	return s.st.Tx(ctx, func(tx *sql.Tx) error {
@@ -163,8 +164,8 @@ func (s *Service) UnlinkTelegram(ctx context.Context, userID int64) error {
 			return fmt.Errorf("clear tg fields: %w", err)
 		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE targets SET status = 'inactive', inactive_reason = 'bot_removed',
-			 updated_at = ? WHERE owner_user_id = ? AND status = 'active'`,
+			`UPDATE targets SET status = 'inactive', inactive_reason = 'user_left',
+			 rights_checked_at = NULL, updated_at = ? WHERE owner_user_id = ? AND status = 'active'`,
 			now.UnixMilli(), userID)
 		if err != nil {
 			return fmt.Errorf("deactivate targets: %w", err)
@@ -211,6 +212,20 @@ func (s *Service) ConsumeLinkToken(ctx context.Context, rawToken string, tgUserI
 		}
 		if existingUser.Valid {
 			return errs.New(errs.Forbidden, "telegram id already bound to another account")
+		}
+
+		// Linking a different Telegram account: the old bot chat belongs to
+		// someone else now, and rights checked for the old account no longer
+		// say anything about the new one.
+		if _, err = tx.ExecContext(ctx,
+			`UPDATE targets SET status = 'inactive', inactive_reason = 'user_left', updated_at = ?
+			 WHERE owner_user_id = ? AND type = 'private' AND chat_id != ? AND status = 'active'`,
+			now.UnixMilli(), userID, tgUserID); err != nil {
+			return fmt.Errorf("deactivate old bot chat: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx,
+			`UPDATE targets SET rights_checked_at = NULL WHERE owner_user_id = ?`, userID); err != nil {
+			return fmt.Errorf("reset rights cache: %w", err)
 		}
 
 		// Mark token used.
