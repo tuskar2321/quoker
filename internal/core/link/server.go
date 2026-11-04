@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
+	"github.com/tuskar2321/quoker/internal/core/metrics"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/settings"
@@ -49,6 +50,8 @@ const (
 	// finishedTaskTTL is how long done/failed tasks are kept.
 	finishedTaskTTL = 30 * 24 * time.Hour
 	purgeInterval   = time.Hour
+	// seenEvery throttles last_seen_at writes from heartbeats.
+	seenEvery = time.Minute
 	// headerFingerprint is set by Caddy after mTLS verification.
 	headerFingerprint = "X-Client-Cert-Fingerprint"
 	// headerCertCN is set by Caddy to the certificate's Common Name.
@@ -76,8 +79,13 @@ type Deps struct {
 	Trusted *proxy.Trusted
 	// UploadBase is sent to workers as Config.upload_base.
 	UploadBase string
-	Log        *slog.Logger
-	Now        func() time.Time
+	// Metrics, when set, receives task durations and errors.
+	Metrics *metrics.Registry
+	// OnBotTokenChange runs when bot_token changes outside this process
+	// (core settings set); the bot must learn its new username.
+	OnBotTokenChange func()
+	Log              *slog.Logger
+	Now              func() time.Time
 }
 
 // Shutdown reasons.
@@ -87,6 +95,8 @@ const (
 	ShutdownCoreStopping = "core_stopping"
 	// ShutdownRevoked: the worker was revoked and must not reconnect.
 	ShutdownRevoked = "revoked"
+	// ShutdownReplaced: a newer stream of the same worker took over.
+	ShutdownReplaced = "replaced_by_newer_connection"
 )
 
 // UpdateHandler processes one Telegram update forwarded by the poller.
@@ -105,18 +115,23 @@ func (f UpdateFunc) HandleUpdate(ctx context.Context, updateJSON []byte) error {
 // Server is the gRPC LinkService implementation.
 type Server struct {
 	linkv1.UnimplementedLinkServiceServer
-	st      *store.Store
-	q       *queue.Store
-	set     *settings.Store
-	results ResultHandler
-	updates UpdateHandler
-	trusted proxy.Trusted
-	upload  string
-	log     *slog.Logger
-	now     func() time.Time
+	st          *store.Store
+	q           *queue.Store
+	set         *settings.Store
+	results     ResultHandler
+	updates     UpdateHandler
+	onToken     func()
+	tasksDone   *metrics.Histogram
+	tasksFailed *metrics.Counter
+	trusted     proxy.Trusted
+	upload      string
+	log         *slog.Logger
+	now         func() time.Time
 
 	updateCh chan pendingUpdate
 	stopping <-chan struct{} // closed when the core shuts down
+
+	loops sync.WaitGroup // background loops, done once ctx ends
 
 	mu           sync.Mutex
 	workers      map[string]*workerConn // keyed by worker_id
@@ -145,6 +160,7 @@ func New(ctx context.Context, d Deps) *Server {
 		set:      d.Settings,
 		results:  d.Results,
 		updates:  d.Updates,
+		onToken:  d.OnBotTokenChange,
 		trusted:  *d.Trusted,
 		upload:   d.UploadBase,
 		log:      d.Log,
@@ -153,10 +169,21 @@ func New(ctx context.Context, d Deps) *Server {
 		stopping: ctx.Done(),
 		workers:  make(map[string]*workerConn),
 	}
-	go srv.leaseRecoveryLoop(ctx)
-	go srv.updateLoop(ctx)
-	go srv.purgeLoop(ctx)
-	go srv.pollerLoop(ctx)
+	if d.Metrics == nil {
+		d.Metrics = metrics.New() // not served; keeps the code below unconditional
+	}
+	srv.tasksDone = d.Metrics.Histogram("quoker_task_duration_seconds",
+		"Time from enqueue to a successful result, by task kind and platform.",
+		[]float64{1, 2, 5, 10, 15, 30, 60, 120, 300, 600}, "kind", "platform")
+	srv.tasksFailed = d.Metrics.Counter("quoker_task_errors_total",
+		"Task error results from workers, by task kind and error code.", "kind", "code")
+	for _, loop := range []func(context.Context){srv.leaseRecoveryLoop, srv.updateLoop, srv.purgeLoop, srv.pollerLoop, srv.settingsLoop} {
+		srv.loops.Add(1)
+		go func() {
+			defer srv.loops.Done()
+			loop(ctx)
+		}()
+	}
 	return srv
 }
 
@@ -168,6 +195,7 @@ type workerConn struct {
 	maxParallel int
 	done        chan struct{} // closed when the stream ends
 	closeReq    chan string   // Shutdown reason; Connect sends it and ends the stream
+	seenWritten time.Time     // last last_seen_at write; touched only by Connect's loop
 }
 
 // send queues msg; it reports false once the stream has ended.
@@ -302,6 +330,15 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 
 func (s *Server) handleWorkerMsg(ctx context.Context, conn *workerConn, msg *linkv1.WorkerMessage, log *slog.Logger) {
 	switch v := msg.Msg.(type) {
+	case *linkv1.WorkerMessage_Heartbeat:
+		if now := s.now(); now.Sub(conn.seenWritten) >= seenEvery {
+			conn.seenWritten = now
+			if _, err := s.st.DB().ExecContext(ctx,
+				`UPDATE workers SET last_seen_at = ? WHERE id = ?`, now.UnixMilli(), conn.id); err != nil {
+				log.Warn("update worker seen", "err", err)
+			}
+		}
+
 	case *linkv1.WorkerMessage_TaskProgress:
 		if err := s.q.SetProgress(ctx, v.TaskProgress.TaskId, conn.id, int(v.TaskProgress.Percent)); err != nil {
 			log.Warn("set progress failed", "task", v.TaskProgress.TaskId, "err", err)
@@ -341,6 +378,7 @@ func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *link
 			log.Info("stale task error ignored", "task_id", r.TaskId, "status", task.Status)
 			return
 		}
+		s.tasksFailed.Inc(string(task.Kind), e.Code)
 		s.complete(ctx, queue.CompleteParams{
 			TaskID: r.TaskId, WorkerID: conn.id, ErrCode: e.Code, ErrMsg: e.Message, Retryable: e.Retryable,
 			RetryAfter: time.Duration(e.RetryAfterS) * time.Second,
@@ -368,6 +406,7 @@ func (s *Server) handleTaskResult(ctx context.Context, conn *workerConn, r *link
 			return
 		}
 	}
+	s.tasksDone.Observe(s.now().Sub(task.CreatedAt).Seconds(), string(task.Kind), TaskPlatform(string(task.Kind), task.Payload))
 	if mine {
 		s.complete(ctx, queue.CompleteParams{TaskID: r.TaskId, WorkerID: conn.id, Result: result}, log)
 		log.Info("task done", "task_id", r.TaskId, "kind", task.Kind)
@@ -607,9 +646,18 @@ func defaultLease(k queue.Kind) time.Duration {
 
 // loadConfig reads settings and builds a Config for the worker.
 func (s *Server) loadConfig(ctx context.Context, workerID string) (*linkv1.Config, error) {
-	botToken, _, _ := s.set.Get(ctx, settings.BotToken)
-	cookies, _, _ := s.set.Get(ctx, settings.InstagramCookies)
-	pollerID, _, _ := s.set.Get(ctx, settings.PollerWorkerID)
+	// A read error must not hand the worker an empty token or cookies, which
+	// would make it fail silently.
+	var botToken, cookies, pollerID string
+	for key, dst := range map[settings.Key]*string{
+		settings.BotToken: &botToken, settings.InstagramCookies: &cookies, settings.PollerWorkerID: &pollerID,
+	} {
+		v, _, err := s.set.Get(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		*dst = v
+	}
 	return &linkv1.Config{
 		BotToken:         botToken,
 		InstagramCookies: cookies,
@@ -622,9 +670,18 @@ func (s *Server) loadConfig(ctx context.Context, workerID string) (*linkv1.Confi
 	}, nil
 }
 
+// registerWorker makes conn the worker's stream. An older stream of the same
+// worker (a reconnect raced the old one's teardown) is closed, so two streams
+// never lease for one worker.
 func (s *Server) registerWorker(conn *workerConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if old, ok := s.workers[conn.id]; ok {
+		select {
+		case old.closeReq <- ShutdownReplaced:
+		default:
+		}
+	}
 	s.workers[conn.id] = conn
 }
 
@@ -659,6 +716,10 @@ func (s *Server) releaseTasks(workerID string, log *slog.Logger) {
 		s.notifyIfFailed(ctx, id, log)
 	}
 }
+
+// Wait blocks until the background loops started by New have stopped; call
+// it after cancelling New's context, before closing the store.
+func (s *Server) Wait() { s.loops.Wait() }
 
 // SendConfig pushes a fresh Config to a connected worker (after settings
 // change); a disconnected worker gets it on its next connect.
@@ -912,4 +973,61 @@ func (s *Server) purgeUpdates(ctx context.Context) error {
 	_, err := s.st.DB().ExecContext(ctx,
 		`DELETE FROM bot_updates WHERE processed_at < ?`, s.now().Add(-processedUpdatesTTL).UnixMilli())
 	return err
+}
+
+// settingsInterval is how often the worker-facing settings are checked.
+const settingsInterval = time.Minute
+
+// settingsLoop notices bot_token and instagram_cookies written by another
+// process (the CLI writes straight to the database) and pushes a new Config
+// to every worker. Changes made through the bot already broadcast; a second
+// Config is harmless.
+func (s *Server) settingsLoop(ctx context.Context) {
+	last, _ := s.settingsStamps(ctx)
+	t := time.NewTicker(settingsInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		last = s.checkSettings(ctx, last)
+	}
+}
+
+// checkSettings broadcasts a Config when the stamps moved past last and
+// returns the new stamps.
+func (s *Server) checkSettings(ctx context.Context, last settingsStamp) settingsStamp {
+	cur, err := s.settingsStamps(ctx)
+	if err != nil {
+		s.log.Warn("check settings", "err", err)
+		return last
+	}
+	if cur == last {
+		return last
+	}
+	tokenChanged := cur.token != last.token
+	s.log.Info("worker settings changed, sending new config", "bot_token", tokenChanged)
+	if err := s.BroadcastConfig(ctx); err != nil {
+		s.log.Warn("broadcast config", "err", err)
+	}
+	if tokenChanged && s.onToken != nil {
+		s.onToken()
+	}
+	return cur
+}
+
+type settingsStamp struct{ token, cookies int64 }
+
+func (s *Server) settingsStamps(ctx context.Context) (settingsStamp, error) {
+	var st settingsStamp
+	err := s.st.DB().QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(CASE WHEN key = ? THEN updated_at END), 0),
+		       COALESCE(MAX(CASE WHEN key = ? THEN updated_at END), 0)
+		FROM settings`, string(settings.BotToken), string(settings.InstagramCookies)).Scan(&st.token, &st.cookies)
+	if err != nil {
+		return st, fmt.Errorf("settings stamps: %w", err)
+	}
+	return st, nil
 }

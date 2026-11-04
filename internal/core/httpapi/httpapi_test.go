@@ -19,6 +19,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/history"
+	"github.com/tuskar2321/quoker/internal/core/metrics"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/releases"
@@ -42,6 +43,7 @@ type env struct {
 	queue    *queue.Store
 	releases *releases.Store
 	handler  *server
+	metrics  *metrics.Registry
 	settings *settings.Store
 	now      time.Time
 }
@@ -61,6 +63,7 @@ func newEnv(t *testing.T) *env {
 	q := queue.New(st, clock)
 	vids := videos.New(st, q, clock)
 	e.videos, e.queue = vids, q
+	e.metrics = metrics.New()
 	e.releases = releases.New(st, filepath.Join(t.TempDir(), "releases"), clock)
 	if e.files, err = files.New(st, t.TempDir(), 1<<30, clock, nil); err != nil {
 		t.Fatal(err)
@@ -74,6 +77,7 @@ func newEnv(t *testing.T) *env {
 		History:  history.New(st, clock),
 		Releases: e.releases,
 		Trusted:  proxy.Default(),
+		Metrics:  e.metrics,
 		Store:    st,
 		Version:  "test",
 		Admin: admin.New(admin.Deps{
@@ -351,7 +355,8 @@ func TestAdminInvites(t *testing.T) {
 	id := strconv.FormatFloat(target["id"].(float64), 'f', 0, 64)
 	expect(t, e.do(req{method: "DELETE", path: "/v1/admin/invites/" + id, token: tok}), http.StatusNoContent, "")
 	expect(t, e.do(req{method: "DELETE", path: "/v1/admin/invites/999", token: tok}), http.StatusNotFound, "not_found")
-	expect(t, e.do(req{method: "DELETE", path: "/v1/admin/invites/abc", token: tok}), http.StatusNotFound, "not_found")
+	expect(t, e.do(req{method: "DELETE", path: "/v1/admin/invites/abc", token: tok}), http.StatusBadRequest, "invalid_request")
+	expect(t, e.do(req{method: "POST", path: "/v1/admin/users/abc/block", token: tok}), http.StatusBadRequest, "invalid_request")
 
 	r = e.do(req{method: "POST", path: "/v1/auth/register",
 		body: map[string]string{"invite_code": code, "device_id": deviceID, "device_name": "n"}})

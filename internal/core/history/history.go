@@ -91,12 +91,21 @@ func (s *Service) List(ctx context.Context, userID int64, cursor string, limit i
 		limit = DefaultLimit
 	}
 	limit = min(limit, MaxLimit)
-	afterAt, afterID, err := decodeCursor(cursor)
+	afterAt, afterID, snap, err := decodeCursor(cursor)
 	if err != nil {
 		return Page{}, err
 	}
+	// The first page pins the newest action id; later pages ignore newer
+	// actions, so a video that moves to the top meanwhile is neither lost
+	// below the cursor nor shown twice.
+	if snap == 0 {
+		if err := s.st.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(id), 0) FROM history WHERE user_id = ?`, userID).Scan(&snap); err != nil {
+			return Page{}, fmt.Errorf("history snapshot: %w", err)
+		}
+	}
 
-	heads, err := s.heads(ctx, userID, afterAt, afterID, limit+1)
+	heads, err := s.heads(ctx, userID, afterAt, afterID, snap, limit+1)
 	if err != nil {
 		return Page{}, err
 	}
@@ -105,7 +114,7 @@ func (s *Service) List(ctx context.Context, userID int64, cursor string, limit i
 	if len(heads) > limit {
 		heads = heads[:limit]
 		last := heads[len(heads)-1]
-		page.NextCursor = encodeCursor(last.lastAt, last.lastID)
+		page.NextCursor = encodeCursor(last.lastAt, last.lastID, snap)
 	}
 	if len(heads) == 0 {
 		return page, nil
@@ -114,7 +123,7 @@ func (s *Service) List(ctx context.Context, userID int64, cursor string, limit i
 	for i, h := range heads {
 		ids[i] = h.videoID
 	}
-	actions, err := s.actions(ctx, userID, ids)
+	actions, err := s.actions(ctx, userID, ids, snap)
 	if err != nil {
 		return Page{}, err
 	}
@@ -136,18 +145,18 @@ type head struct {
 
 // heads lists the videos among the newest MaxActions actions, ordered by
 // each video's latest action, after the cursor position.
-func (s *Service) heads(ctx context.Context, userID, afterAt, afterID int64, n int) ([]head, error) {
+func (s *Service) heads(ctx context.Context, userID, afterAt, afterID, snap int64, n int) ([]head, error) {
 	rows, err := s.st.DB().QueryContext(ctx, `
 		WITH recent AS (
 			SELECT id, video_id, created_at FROM history
-			WHERE user_id = ? AND created_at >= ?
+			WHERE user_id = ? AND created_at >= ? AND id <= ?
 			ORDER BY created_at DESC, id DESC LIMIT ?)
 		SELECT video_id, MAX(created_at) AS last_at, MAX(id) AS last_id
 		FROM recent GROUP BY video_id
 		HAVING ? = 0 OR (last_at, last_id) < (?, ?)
 		ORDER BY last_at DESC, last_id DESC
 		LIMIT ?`,
-		userID, s.now().Add(-Retention).UnixMilli(), MaxActions,
+		userID, s.now().Add(-Retention).UnixMilli(), snap, MaxActions,
 		afterAt, afterAt, afterID, n)
 	if err != nil {
 		return nil, fmt.Errorf("list history: %w", err)
@@ -165,14 +174,14 @@ func (s *Service) heads(ctx context.Context, userID, afterAt, afterID int64, n i
 }
 
 // actions loads the recent actions of the given videos, newest first.
-func (s *Service) actions(ctx context.Context, userID int64, videoIDs []string) (map[string][]Action, error) {
-	args := []any{userID, s.now().Add(-Retention).UnixMilli(), MaxActions}
+func (s *Service) actions(ctx context.Context, userID int64, videoIDs []string, snap int64) (map[string][]Action, error) {
+	args := []any{userID, s.now().Add(-Retention).UnixMilli(), snap, MaxActions}
 	for _, id := range videoIDs {
 		args = append(args, id)
 	}
 	rows, err := s.st.DB().QueryContext(ctx, `
 		WITH recent AS (
-			SELECT * FROM history WHERE user_id = ? AND created_at >= ?
+			SELECT * FROM history WHERE user_id = ? AND created_at >= ? AND id <= ?
 			ORDER BY created_at DESC, id DESC LIMIT ?)
 		SELECT video_id, action, target_title, send_id, created_at FROM recent
 		WHERE video_id IN (`+placeholders(len(videoIDs))+`)
@@ -281,24 +290,30 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
-func encodeCursor(at, id int64) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(at, 10) + ":" + strconv.FormatInt(id, 10)))
+// encodeCursor packs the last item's position and the snapshot id.
+func encodeCursor(at, id, snap int64) string {
+	raw := strconv.FormatInt(at, 10) + ":" + strconv.FormatInt(id, 10) + ":" + strconv.FormatInt(snap, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-func decodeCursor(c string) (at, id int64, err error) {
+func decodeCursor(c string) (at, id, snap int64, err error) {
 	if c == "" {
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
+	bad := errs.New(errs.InvalidRequest, "bad cursor")
 	raw, err := base64.RawURLEncoding.DecodeString(c)
-	if err == nil {
-		a, b, ok := strings.Cut(string(raw), ":")
-		if ok {
-			if at, err = strconv.ParseInt(a, 10, 64); err == nil {
-				if id, err = strconv.ParseInt(b, 10, 64); err == nil && at > 0 {
-					return at, id, nil
-				}
-			}
+	if err != nil {
+		return 0, 0, 0, bad
+	}
+	parts := strings.Split(string(raw), ":")
+	if len(parts) != 3 {
+		return 0, 0, 0, bad
+	}
+	var nums [3]int64
+	for i, p := range parts {
+		if nums[i], err = strconv.ParseInt(p, 10, 64); err != nil || nums[i] <= 0 {
+			return 0, 0, 0, bad
 		}
 	}
-	return 0, 0, errs.New(errs.InvalidRequest, "bad cursor")
+	return nums[0], nums[1], nums[2], nil
 }

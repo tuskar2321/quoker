@@ -4,8 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
+	"github.com/tuskar2321/quoker/internal/core/metrics"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/settings"
@@ -584,5 +588,124 @@ func TestUntrustedPeerRejected(t *testing.T) {
 	_ = stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_Hello{Hello: &linkv1.Hello{WorkerId: "worker-1"}}})
 	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("err = %v, want Unauthenticated", err)
+	}
+}
+
+// TestReconnectReplacesOldStream: a second stream of the same worker closes
+// the first, so two streams never lease for one worker (REVIEW L1).
+func TestReconnectReplacesOldStream(t *testing.T) {
+	f := newTestFixture(t)
+	old := f.connect("worker-1")
+	_ = f.connect("worker-1")
+	var reason string
+	for {
+		msg, err := old.Recv()
+		if err != nil {
+			break
+		}
+		if sd := msg.GetShutdown(); sd != nil {
+			reason = sd.Reason
+		}
+	}
+	if reason != ShutdownReplaced {
+		t.Fatalf("old stream closed with %q", reason)
+	}
+	if got := f.srv.ConnectedWorkers(); len(got) != 1 || got[0] != "worker-1" {
+		t.Fatalf("connected = %v", got)
+	}
+}
+
+// TestHeartbeatUpdatesLastSeen: "last seen" follows heartbeats, not only
+// connects (REVIEW L3).
+func TestHeartbeatUpdatesLastSeen(t *testing.T) {
+	f := newTestFixture(t)
+	stream := f.connect("worker-1")
+	if _, err := f.srv.st.DB().ExecContext(f.ctx, `UPDATE workers SET last_seen_at = 0 WHERE id = 'worker-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&linkv1.WorkerMessage{Msg: &linkv1.WorkerMessage_Heartbeat{Heartbeat: &linkv1.Heartbeat{}}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var seen int64
+		_ = f.srv.st.DB().QueryRowContext(f.ctx, `SELECT last_seen_at FROM workers WHERE id = 'worker-1'`).Scan(&seen)
+		if seen == f.now.UnixMilli() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("last_seen_at = %d", seen)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestSettingsChangeReachesWorkers: a token written by the CLI (another
+// process) reaches connected workers without a reconnect (REVIEW N7).
+func TestSettingsChangeReachesWorkers(t *testing.T) {
+	f := newTestFixture(t)
+	var tokenChanged atomic.Bool
+	f.srv.onToken = func() { tokenChanged.Store(true) }
+	stream := f.connect("worker-1")
+	last, _ := f.srv.settingsStamps(f.ctx)
+
+	if err := f.set.Set(f.ctx, settings.BotToken, "123:NEW-TOKEN"); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.checkSettings(f.ctx, last)
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := msg.GetConfig(); c != nil {
+			if c.BotToken != "123:NEW-TOKEN" {
+				t.Fatalf("config token = %q", c.BotToken)
+			}
+			break
+		}
+	}
+	if !tokenChanged.Load() {
+		t.Fatal("bot was not told to re-initialise")
+	}
+}
+
+// TestTaskMetrics: results feed the task duration histogram and the error
+// counter (REVIEW N1).
+func TestTaskMetrics(t *testing.T) {
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "q.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	_, _ = st.DB().ExecContext(context.Background(),
+		`INSERT INTO workers (id, fingerprint, status, created_at) VALUES ('worker-1', 'fp-worker-1', 'allowed', 0)`)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	q := queue.New(st, nil)
+	reg := metrics.New()
+	srv := New(ctx, Deps{Store: st, Queue: q, Settings: settings.New(st.DB(), nil), Metrics: reg})
+	conn := &workerConn{id: "worker-1", out: make(chan *linkv1.CoreMessage, 8), done: make(chan struct{}), closeReq: make(chan string, 1)}
+
+	resolvePayload, _ := marshalProto(&linkv1.ResolveTask{Url: "https://www.tiktok.com/@a/video/1"})
+	ok, _ := q.Enqueue(ctx, queue.EnqueueParams{Kind: queue.KindResolve, Payload: resolvePayload})
+	_, _ = q.Lease(ctx, "worker-1")
+	srv.handleTaskResult(ctx, conn, &linkv1.TaskResult{TaskId: ok,
+		Result: &linkv1.TaskResult_Resolve{Resolve: &linkv1.ResolveResult{Platform: "tiktok", NativeId: "1"}}}, srv.log)
+
+	bad, _ := q.Enqueue(ctx, queue.EnqueueParams{Kind: queue.KindResolve, Payload: resolvePayload})
+	_, _ = q.Lease(ctx, "worker-1")
+	srv.handleTaskResult(ctx, conn, &linkv1.TaskResult{TaskId: bad,
+		Result: &linkv1.TaskResult_Error{Error: &linkv1.TaskError{Code: "private_video"}}}, srv.log)
+
+	rec := httptest.NewRecorder()
+	reg.Handler(srv.log).ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil)) //nolint:noctx // test
+	for _, want := range []string{
+		`quoker_task_duration_seconds_count{kind="resolve",platform="tiktok"} 1`,
+		`quoker_task_errors_total{kind="resolve",code="private_video"} 1`,
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, rec.Body.String())
+		}
 	}
 }

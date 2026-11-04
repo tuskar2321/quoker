@@ -10,7 +10,9 @@ import (
 )
 
 // New returns a JSON logger writing to w at the given level
-// (debug, info, warn, error; empty means info) tagged with component.
+// (debug, info, warn, error; empty means info) tagged with component. With an
+// empty component the logger is a base: derive one logger per subsystem with
+// base.With("component", name), so each record carries the key once.
 func New(w io.Writer, level, component string) (*slog.Logger, error) {
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(strings.TrimSpace(level))); err != nil && level != "" {
@@ -25,5 +27,8 @@ func New(w io.Writer, level, component string) (*slog.Logger, error) {
 			return a
 		},
 	})
+	if component == "" {
+		return slog.New(h), nil
+	}
 	return slog.New(h).With("component", component), nil
 }

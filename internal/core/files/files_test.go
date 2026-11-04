@@ -324,3 +324,40 @@ func (c *cutReader) Read(p []byte) (int, error) {
 	c.left -= n
 	return n, err
 }
+
+// TestReconcile: states the disk or the queue do not back are reset at
+// startup (REVIEW N8).
+func TestReconcile(t *testing.T) {
+	e := newEnv(t, 1<<30)
+	ctx := context.Background()
+	for _, id := range []string{"tiktok:lost", "tiktok:kept", "tiktok:stuck", "tiktok:busy"} {
+		e.addVideo(t, id, e.now, e.now.Add(time.Hour))
+	}
+	e.store(t, "tiktok:kept", 10)
+	e.store(t, "tiktok:lost", 10)
+	// The disk loses both files; only one is uploaded again.
+	entries, _ := os.ReadDir(filepath.Join(e.root, "files"))
+	for _, en := range entries {
+		_ = os.Remove(filepath.Join(e.root, "files", en.Name()))
+	}
+	e.store(t, "tiktok:kept", 10) // only this one is back on disk
+	if _, err := e.st.DB().ExecContext(ctx,
+		`UPDATE videos SET file_status = 'preparing' WHERE id IN ('tiktok:stuck', 'tiktok:busy')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB().ExecContext(ctx,
+		`INSERT INTO tasks (id, kind, payload, status, priority, max_attempts, dedup_key, not_before, created_at, updated_at)
+		 VALUES ('t1', 'download', x'', 'queued', 0, 3, 'download:tiktok:busy', 0, 0, 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	fixed, err := e.fs.Reconcile(ctx)
+	if err != nil || fixed != 2 {
+		t.Fatalf("fixed = %d, %v", fixed, err)
+	}
+	for id, want := range map[string]string{"tiktok:lost": "none", "tiktok:kept": "ready", "tiktok:stuck": "none", "tiktok:busy": "preparing"} {
+		if got := e.fileStatus(t, id); got != want {
+			t.Errorf("%s = %s, want %s", id, got, want)
+		}
+	}
+}

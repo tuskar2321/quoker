@@ -33,9 +33,13 @@ func (s *Store) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// Cleanup deletes expired videos with their files, stale partial uploads and
-// orphaned files, then evicts if the cache is over its limit.
+// Cleanup reconciles file states, deletes expired videos with their files,
+// stale partial uploads and orphaned files, then evicts if the cache is over
+// its limit.
 func (s *Store) Cleanup(ctx context.Context) error {
+	if _, err := s.Reconcile(ctx); err != nil {
+		return err
+	}
 	now := s.now()
 	ids, err := s.queryIDs(ctx, `SELECT id FROM videos WHERE expires_at < ?`, now.UnixMilli())
 	if err != nil {
@@ -156,4 +160,41 @@ func (s *Store) queryIDs(ctx context.Context, q string, args ...any) ([]string, 
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// Reconcile fixes file states the disk or the queue no longer back
+// (docs/11-nfr-security.md): "ready" without a file on disk and "preparing"
+// without an active download task become "none". It runs at startup, so a
+// damaged cache or a lost queue does not leave videos stuck, and with every
+// cleanup.
+func (s *Store) Reconcile(ctx context.Context) (fixed int, err error) {
+	ready, err := s.queryIDs(ctx, `SELECT id FROM videos WHERE file_status = 'ready'`)
+	if err != nil {
+		return 0, err
+	}
+	var gone []string
+	for _, id := range ready {
+		if !s.HasFile(id) && !s.pinned(id) {
+			gone = append(gone, id)
+		}
+	}
+	stuck, err := s.queryIDs(ctx, `
+		SELECT v.id FROM videos v
+		WHERE v.file_status = 'preparing' AND NOT EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.dedup_key = 'download:' || v.id AND t.status IN ('queued', 'leased'))`)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range append(gone, stuck...) {
+		if _, err := s.st.DB().ExecContext(ctx,
+			`UPDATE videos SET file_status = 'none', file_size = NULL, file_sha256 = NULL WHERE id = ?`, id); err != nil {
+			return fixed, fmt.Errorf("reset file state: %w", err)
+		}
+		fixed++
+	}
+	if fixed > 0 {
+		s.log.Info("file states reconciled", "reset", fixed)
+	}
+	return fixed, nil
 }

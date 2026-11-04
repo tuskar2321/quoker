@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,6 +97,16 @@ func (p *Poller) Run(ctx context.Context) {
 			}
 			var te *telegram.Error
 			if errors.As(err, &te) && te.Status == http.StatusConflict {
+				if strings.Contains(strings.ToLower(te.Description), "webhook") {
+					// The bot was set up with a webhook elsewhere: Quoker owns
+					// the bot and polls, so the webhook goes.
+					p.log.Warn("bot has a webhook, deleting it to poll", "err", err)
+					if _, derr := p.tg.Call(ctx, cfg.BotApiBase, cfg.BotToken, "deleteWebhook", []byte(`{"drop_pending_updates":false}`)); derr != nil {
+						p.log.Error("deleteWebhook failed", "err", derr)
+						sleep(ctx, p.conflict)
+					}
+					continue
+				}
 				p.log.Warn("another getUpdates consumer is active", "err", err)
 				sleep(ctx, p.conflict)
 				continue

@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,5 +148,34 @@ func TestConflictBacksOff(t *testing.T) {
 	run(t, bot, core, 100*time.Millisecond)
 	if len(bot.offsets) == 0 || len(bot.offsets) > 15 {
 		t.Fatalf("calls during conflict = %d", len(bot.offsets))
+	}
+}
+
+// TestWebhookConflictDeletesWebhook: a webhook set elsewhere is removed so
+// polling can start (REVIEW L14).
+func TestWebhookConflictDeletesWebhook(t *testing.T) {
+	var deleted atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/deleteWebhook"):
+			deleted.Store(true)
+			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+		case !deleted.Load():
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":409,"description":"Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first"}`)
+		default:
+			_, _ = io.WriteString(w, `{"ok":true,"result":[{"update_id":3}]}`)
+		}
+	}))
+	defer srv.Close()
+	core := &fakeCore{autoAck: true, cfg: &linkv1.Config{PollUpdates: true, BotToken: "1:T", BotApiBase: srv.URL}}
+	core.poller = updates.New(telegram.New(srv.Client()), core, nil).WithTimings(0, 10*time.Millisecond, 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	core.poller.Run(ctx)
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if !deleted.Load() || len(core.forwarded) == 0 || core.forwarded[0] != 3 {
+		t.Fatalf("deleted = %v, forwarded = %v", deleted.Load(), core.forwarded)
 	}
 }

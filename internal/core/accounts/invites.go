@@ -74,6 +74,12 @@ func (s *Service) CreateBootstrapInvite(ctx context.Context) (string, time.Time,
 	if admins > 0 {
 		return "", time.Time{}, errs.New(errs.Forbidden, "an admin already exists; create invites from the app or the bot")
 	}
+	// Only the newest bootstrap code stays valid.
+	if _, err := s.db().ExecContext(ctx,
+		`UPDATE invites SET revoked_at = ? WHERE created_by IS NULL AND used_at IS NULL AND revoked_at IS NULL`,
+		s.now().UnixMilli()); err != nil {
+		return "", time.Time{}, fmt.Errorf("revoke old bootstrap invites: %w", err)
+	}
 	return s.CreateInvite(ctx, 0, RoleAdmin, DefaultInviteTTL)
 }
 

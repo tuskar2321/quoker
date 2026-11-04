@@ -77,6 +77,11 @@ paths:
                 properties:
                   deep_link: { type: string, format: uri }
                   expires_at: { type: string, format: date-time }
+        '503':
+          description: The bot's username is not known yet (no worker has answered getMe since the core started)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /v1/auth/telegram/status:
     get:

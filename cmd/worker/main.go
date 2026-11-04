@@ -48,10 +48,11 @@ func run(args []string, getenv func(string) string) error {
 		return err
 	}
 
-	log, err := logging.New(os.Stdout, cfg.LogLevel, "worker")
+	base, err := logging.New(os.Stdout, cfg.LogLevel, "")
 	if err != nil {
 		return err
 	}
+	log := base.With("component", "worker")
 
 	tlsCfg, err := buildTLS(cfg)
 	if err != nil {
@@ -90,7 +91,7 @@ func run(args []string, getenv func(string) string) error {
 		Upload:    upload.New(coreHTTP),
 		Cache:     cache,
 		UserAgent: cfg.UserAgent,
-		Log:       log.With("component", "tasks"),
+		Log:       base.With("component", "tasks"),
 	})
 
 	// configProxy forwards CoreConfig calls to the link client once it exists.
@@ -99,7 +100,7 @@ func run(args []string, getenv func(string) string) error {
 	proxy := &configProxy{}
 
 	var poller *updates.Poller
-	taskRunner := runner.New(handlers.Runner(), proxy, cfg.MaxParallel, log.With("component", "runner"))
+	taskRunner := runner.New(handlers.Runner(), proxy, cfg.MaxParallel, base.With("component", "runner"))
 
 	client := workerlink.New(workerlink.Config{
 		WorkerID:     cfg.WorkerID,
@@ -114,7 +115,7 @@ func run(args []string, getenv func(string) string) error {
 		OnBotUpdateAck: func(id int64) { poller.Ack(id) },
 	}, log, nil)
 	proxy.client = client
-	poller = updates.New(tg, client, log.With("component", "updates"))
+	poller = updates.New(tg, client, base.With("component", "updates"))
 	go poller.Run(ctx)
 
 	log.Info("starting worker", "id", cfg.WorkerID, "core", cfg.CoreAddr, "version", cfg.Version, "ytdlp", cfg.YtdlpVersion)

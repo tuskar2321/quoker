@@ -66,7 +66,7 @@
 
 1. Первая попытка — без cookies.
 2. Если stderr указывает на требование входа или лимит (`login required`, `rate-limit reached`, `Requested content is not available`) и в конфиге есть `instagram_cookies` — повтор с `--cookies <tmp>/cookies.txt` (файл создаётся на время задачи с правами `0600` и удаляется).
-3. Нет cookies или не помогли → `login_required`; ядро шлёт админу алерт «Instagram требует вход: обновите cookies служебного аккаунта (/cookies)».
+3. Нет cookies или не помогли → `login_required`; ядро шлёт админу алерт «Instagram требует вход: обновите cookies служебного аккаунта (/cookies)». Исключение: если и с cookies Instagram отвечает «Requested content is not available», пост удалён или закрыт — это `private_video`, без алерта.
 4. Cookies — от отдельного служебного аккаунта, не личного. После переезда воркера на новый IP Instagram может потребовать подтверждения входа.
 
 ## Сопоставление ошибок yt-dlp

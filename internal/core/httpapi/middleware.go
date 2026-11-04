@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/metrics"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
@@ -63,7 +64,7 @@ func principalFrom(ctx context.Context) accounts.Principal {
 
 // accessLog assigns a request id, a request-scoped logger, and logs one line
 // per request. Query strings and bodies are never logged.
-func accessLog(base *slog.Logger) func(http.Handler) http.Handler {
+func accessLog(base *slog.Logger, responses *metrics.Counter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -76,6 +77,7 @@ func accessLog(base *slog.Logger) func(http.Handler) http.Handler {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(ww, r.WithContext(ctx))
 
+			responses.Inc(strconv.Itoa(ww.Status()))
 			attrs := []any{
 				"method", r.Method,
 				"path", r.URL.Path,

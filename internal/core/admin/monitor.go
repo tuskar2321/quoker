@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ type alertState struct {
 	noWorkersSent  bool
 	last           map[string]time.Time // alert key → last sent
 	summaryDay     string
+	warnedNoChat   bool // the missing admin chat was reported once
 }
 
 // Run checks the system every minute and alerts the admin chat.
@@ -147,9 +149,21 @@ func (s *Service) alertOnce(ctx context.Context, key string, every time.Duration
 }
 
 func (s *Service) notify(ctx context.Context, text string) {
-	if err := s.Notify(ctx, text); err != nil {
-		s.d.Log.Warn("admin alert not sent", "err", err, "alert", text)
+	err := s.Notify(ctx, text)
+	if err == nil {
+		return
 	}
+	if errors.Is(err, errNoAdminChat) {
+		s.mu.Lock()
+		warned := s.alerts.warnedNoChat
+		s.alerts.warnedNoChat = true
+		s.mu.Unlock()
+		if warned {
+			s.d.Log.Debug("admin alert not sent", "err", err, "alert", text)
+			return
+		}
+	}
+	s.d.Log.Warn("admin alert not sent", "err", err, "alert", text)
 }
 
 // Notify messages the admin chat.

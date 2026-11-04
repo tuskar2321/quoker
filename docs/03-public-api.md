@@ -101,7 +101,7 @@
 | Метод | Путь | Тело / параметры | Ответ |
 | --- | --- | --- | --- |
 | POST | `/v1/videos/resolve` | `{url}` | `200 {video}` или `202 {task_id}` (ядро ждёт до 15 с) |
-| GET | `/v1/tasks/{task_id}` | — | `{task}`; для `resolve` при `done` содержит `video` |
+| GET | `/v1/tasks/{task_id}` | — | `{task}`; только задачи `resolve` и `download` (прочие — `404`); при `done` содержит `video`. Статусы: `queued`, `running`, `done`, `failed` |
 | GET | `/v1/videos/{id}` | — | `{video}` |
 | GET | `/v1/videos/{id}/thumbnail` | — | `image/jpeg` |
 | POST | `/v1/videos/{id}/prepare` | — | `200 {file: {status: ready, size_bytes}}` или `202 {task_id}` |

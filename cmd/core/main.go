@@ -39,6 +39,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/history"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
 	corelink "github.com/tuskar2321/quoker/internal/core/link"
+	"github.com/tuskar2321/quoker/internal/core/metrics"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/queue"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
@@ -174,10 +175,11 @@ func withStore(cfg config.Config, fn func(context.Context, *store.Store) error) 
 }
 
 func serve(cfg config.Config) error {
-	log, err := logging.New(os.Stdout, cfg.LogLevel, "core")
+	base, err := logging.New(os.Stdout, cfg.LogLevel, "")
 	if err != nil {
 		return err
 	}
+	log := base.With("component", "core")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -202,42 +204,67 @@ func serve(cfg config.Config) error {
 	accSvc := accounts.New(st, nil, nil)
 	targetsSvc := targets.New(st, nil).WithBot(caller)
 	sendsSvc := sends.New(st, q, videosSvc, targetsSvc, nil)
-	cache, err := files.New(st, cfg.CacheDir, cfg.CacheMaxBytes, nil, log.With("component", "files"))
+	cache, err := files.New(st, cfg.CacheDir, cfg.CacheMaxBytes, nil, base.With("component", "files"))
 	if err != nil {
 		return err
 	}
-	go cache.Run(ctx, files.CleanupInterval)
+	// Background work is tracked so the store closes only after it stops.
+	var bg sync.WaitGroup
+	spawn := func(fn func(context.Context)) {
+		bg.Add(1)
+		go func() {
+			defer bg.Done()
+			fn(ctx)
+		}()
+	}
+	// Before serving: no video may claim a file the disk lost (docs/11).
+	if _, err := cache.Reconcile(ctx); err != nil {
+		return fmt.Errorf("reconcile cache: %w", err)
+	}
+	spawn(func(ctx context.Context) { cache.Run(ctx, files.CleanupInterval) })
 	releasesSvc := releases.New(st, cfg.ReleasesDir, nil)
 	historySvc := history.New(st, nil)
-	go historySvc.Run(ctx, history.CleanupInterval, func(err error) { log.Warn("history cleanup", "err", err) })
-	go ratelimit.RunPurge(ctx, st, time.Hour, 24*time.Hour, func(err error) { log.Warn("rate limit purge", "err", err) })
+	spawn(func(ctx context.Context) {
+		historySvc.Run(ctx, history.CleanupInterval, func(err error) { log.Warn("history cleanup", "err", err) })
+	})
+	spawn(func(ctx context.Context) {
+		ratelimit.RunPurge(ctx, st, time.Hour, 24*time.Hour, func(err error) { log.Warn("rate limit purge", "err", err) })
+	})
 	if cfg.UploadBase == "" {
 		log.Warn("UPLOAD_BASE and DOMAIN are empty: workers cannot upload covers and files")
+	}
+	if cfg.PublicURL == "" {
+		log.Warn("PUBLIC_URL and DOMAIN are empty: apk_url will follow the request's Host header")
 	}
 
 	// The bot handler needs admin, which needs the link server; updates only
 	// arrive once gRPC serves, by which time botHandler is set.
 	var botHandler *bot.Handler
+	reg := metrics.New()
 	linkSrv := corelink.New(ctx, corelink.Deps{
-		Store:      st,
-		Queue:      q,
-		Settings:   set,
-		Results:    results.New(videosSvc, sendsSvc, cache),
-		Updates:    corelink.UpdateFunc(func(ctx context.Context, u []byte) error { return botHandler.HandleUpdate(ctx, u) }),
-		UploadBase: cfg.UploadBase,
-		Trusted:    &trusted,
-		Log:        log.With("component", "link"),
+		Store:    st,
+		Queue:    q,
+		Settings: set,
+		Results:  results.New(videosSvc, sendsSvc, cache),
+		Updates:  corelink.UpdateFunc(func(ctx context.Context, u []byte) error { return botHandler.HandleUpdate(ctx, u) }),
+		// A new token may be a new bot: learn its username, register commands.
+		OnBotTokenChange: func() { spawn(botHandler.Start) },
+		UploadBase:       cfg.UploadBase,
+		Trusted:          &trusted,
+		Metrics:          reg,
+		Log:              base.With("component", "link"),
 	})
+	registerGauges(reg, st, linkSrv, cache)
 	adminSvc := admin.New(admin.Deps{
 		Store: st, Settings: set, Link: linkSrv, Files: cache, Bot: caller,
-		Log: log.With("component", "admin"),
+		Log: base.With("component", "admin"),
 	})
 	botHandler = bot.NewHandler(bot.HandlerDeps{
 		Link: botSvc, Accounts: accSvc, Targets: targetsSvc, Settings: set, Bot: caller, Admin: adminSvc,
-		Log: log.With("component", "bot"),
+		Log: base.With("component", "bot"),
 	})
-	go botHandler.Start(ctx)
-	go adminSvc.Run(ctx)
+	spawn(botHandler.Start)
+	spawn(adminSvc.Run)
 	gs := grpc.NewServer()
 	linkv1.RegisterLinkServiceServer(gs, linkSrv)
 
@@ -267,17 +294,22 @@ func serve(cfg config.Config) error {
 			History:   historySvc,
 			Releases:  releasesSvc,
 			PublicURL: cfg.PublicURL,
+			Spawn:     spawn,
+			Metrics:   reg,
 			Trusted:   trusted,
 			Admin:     adminSvc,
 			Store:     st,
 			Version:   version,
 			Settings:  set,
 			Ready:     st.Ready,
-			Log:       log,
+			Log:       base.With("component", "api"),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		// Bounds reading the request; responses (file downloads) are not
+		// affected. Uploads go to the files server, which has no such cap.
+		ReadTimeout: 30 * time.Second,
+		IdleTimeout: 2 * time.Minute,
+		ErrorLog:    slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
 	httpErrc := make(chan error, 1)
 	go func() {
@@ -291,7 +323,7 @@ func serve(cfg config.Config) error {
 	// Worker uploads; reachable only through Caddy's mTLS listener.
 	filesSrv := &http.Server{
 		Addr:              cfg.FilesAddr,
-		Handler:           cache.InternalHandler(linkSrv.VerifyWorker, trusted, log.With("component", "files")),
+		Handler:           internalMux(cache.InternalHandler(linkSrv.VerifyWorker, trusted, base.With("component", "files")), reg, trusted, base),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
@@ -346,8 +378,67 @@ func serve(cfg config.Config) error {
 		gs.Stop()
 	}
 	wg.Wait()
+	// ctx is cancelled: background loops are stopping; let them finish
+	// before the deferred store close.
+	done := make(chan struct{})
+	go func() {
+		bg.Wait()
+		linkSrv.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		log.Warn("background work did not stop in time")
+	}
 	if httpErr != nil {
 		return httpErr
 	}
 	return <-httpErrc
+}
+
+// internalMux serves worker uploads and /metrics on the internal port. Caddy
+// forwards only /internal/* there, so /metrics is reachable from the docker
+// network (a Prometheus next to the core), never from outside.
+func internalMux(uploads http.Handler, reg *metrics.Registry, trusted proxy.Trusted, base *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", proxy.Only(trusted, reg.Handler(base.With("component", "metrics"))))
+	mux.Handle("/", uploads)
+	return mux
+}
+
+// registerGauges adds the values read at scrape time (docs/11).
+func registerGauges(reg *metrics.Registry, st *store.Store, link *corelink.Server, cache *files.Store) {
+	reg.GaugeFunc("quoker_queue_tasks", "Tasks waiting or running, by kind and status.",
+		func(ctx context.Context) ([]metrics.Sample, error) {
+			rows, err := st.DB().QueryContext(ctx,
+				`SELECT kind, status, COUNT(*) FROM tasks WHERE status IN ('queued', 'leased') GROUP BY kind, status`)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = rows.Close() }()
+			var out []metrics.Sample
+			for rows.Next() {
+				var kind, status string
+				var n float64
+				if err := rows.Scan(&kind, &status, &n); err != nil {
+					return nil, err
+				}
+				out = append(out, metrics.Sample{Values: []string{kind, status}, Value: n})
+			}
+			return out, rows.Err()
+		}, "kind", "status")
+	reg.GaugeFunc("quoker_workers_connected", "Workers with a live stream.",
+		func(context.Context) ([]metrics.Sample, error) {
+			return []metrics.Sample{{Value: float64(len(link.ConnectedWorkers()))}}, nil
+		})
+	reg.GaugeFunc("quoker_cache_bytes", "Bytes held by the file cache.",
+		func(context.Context) ([]metrics.Sample, error) {
+			n, err := cache.UsedBytes()
+			return []metrics.Sample{{Value: float64(n)}}, err
+		})
+	reg.GaugeFunc("quoker_cache_limit_bytes", "File cache limit.",
+		func(context.Context) ([]metrics.Sample, error) {
+			return []metrics.Sample{{Value: float64(cache.MaxBytes())}}, nil
+		})
 }

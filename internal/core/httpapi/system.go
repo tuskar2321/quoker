@@ -39,15 +39,14 @@ func (s *server) refreshTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	log := loggerFrom(r.Context())
 	// Outlives the request on purpose: the client gets 202 and polls targets.
-	bg := context.WithoutCancel(r.Context())
-	go func() {
+	s.spawn(func(base context.Context) {
 		defer s.refreshing.done(u.ID)
-		ctx, cancel := context.WithTimeout(bg, refreshTimeout)
+		ctx, cancel := context.WithTimeout(base, refreshTimeout)
 		defer cancel()
 		if err := s.targets.Refresh(ctx, u.ID, u.TelegramUserID); err != nil {
 			log.Warn("targets refresh", "user_id", u.ID, "err", err)
 		}
-	}()
+	})
 	w.WriteHeader(http.StatusAccepted)
 }
 

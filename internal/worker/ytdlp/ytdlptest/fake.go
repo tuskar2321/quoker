@@ -45,6 +45,7 @@ type Scenario struct {
 	Stderr             string         // printed before failing with ExitCode
 	ExitCode           int            // non-zero fails every call except --version
 	LoginUnlessCookies bool           // fail with "login required" unless --cookies is passed
+	GoneEvenWithCookie bool           // Instagram's "not available" message, with or without cookies
 	FileBytes          map[string]int // download size by -f selector; default 1024
 	Sleep              time.Duration  // delay before doing anything
 	Log                string         // set by Install: one JSON args array per call
@@ -103,6 +104,10 @@ func Run(args []string) int {
 	logCall(sc.Log, args)
 	time.Sleep(sc.Sleep)
 
+	if sc.GoneEvenWithCookie {
+		fmt.Fprintln(os.Stderr, "ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login required")
+		return 1
+	}
 	if sc.LoginUnlessCookies {
 		cookies := value(args, "--cookies")
 		if cookies == "" {

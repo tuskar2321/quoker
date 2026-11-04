@@ -16,6 +16,7 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/files"
 	"github.com/tuskar2321/quoker/internal/core/history"
+	"github.com/tuskar2321/quoker/internal/core/metrics"
 	"github.com/tuskar2321/quoker/internal/core/proxy"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
 	"github.com/tuskar2321/quoker/internal/core/releases"
@@ -54,7 +55,12 @@ type Deps struct {
 	// PublicURL prefixes apk_url; empty derives it from the request.
 	PublicURL string
 	// Trusted are the proxies whose X-Forwarded-For is believed.
-	Trusted  proxy.Trusted
+	Trusted proxy.Trusted
+	// Spawn runs background work that outlives a request; the core stops and
+	// waits for it on shutdown. Nil runs it in a plain goroutine.
+	Spawn func(func(ctx context.Context))
+	// Metrics, when set, counts responses.
+	Metrics  *metrics.Registry
 	Admin    *admin.Service
 	Store    *store.Store // rate limit counters, admin status queries
 	Settings *settings.Store
@@ -75,6 +81,7 @@ type server struct {
 	releases     *releases.Store
 	publicURL    string
 	trusted      proxy.Trusted
+	spawn        func(func(ctx context.Context))
 	admin        *admin.Service
 	st           *store.Store
 	version      string
@@ -100,35 +107,43 @@ func build(d Deps) (*server, http.Handler) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if d.Spawn == nil {
+		d.Spawn = func(fn func(context.Context)) { go fn(context.Background()) }
+	}
 	s := &server{
-		acc:       d.Accounts,
-		bot:       d.Bot,
-		videos:    d.Videos,
-		targets:   d.Targets,
-		sends:     d.Sends,
-		files:     d.Files,
-		history:   d.History,
-		releases:  d.Releases,
-		publicURL: d.PublicURL,
-		trusted:   d.Trusted,
-		admin:     d.Admin,
-		st:        d.Store,
-		version:   d.Version,
-		settings:  d.Settings,
-		ready:     d.Ready,
-		now:       d.Now,
-		register:  ratelimit.New(d.Store, "register", registerPerHour, time.Hour, d.Now),
-		sendLimit: ratelimit.New(d.Store, "send", sendsPerHour, time.Hour, d.Now),
+		acc:          d.Accounts,
+		bot:          d.Bot,
+		videos:       d.Videos,
+		targets:      d.Targets,
+		sends:        d.Sends,
+		files:        d.Files,
+		history:      d.History,
+		releases:     d.Releases,
+		publicURL:    d.PublicURL,
+		trusted:      d.Trusted,
+		spawn:        d.Spawn,
+		admin:        d.Admin,
+		st:           d.Store,
+		version:      d.Version,
+		settings:     d.Settings,
+		ready:        d.Ready,
+		now:          d.Now,
+		register:     ratelimit.New(d.Store, "register", registerPerHour, time.Hour, d.Now),
+		sendLimit:    ratelimit.New(d.Store, "send", sendsPerHour, time.Hour, d.Now),
+		resolveLimit: ratelimit.New(d.Store, "resolve", resolvesPerHour, time.Hour, d.Now),
 		// One target re-check per user per minute: each one is a
 		// getChatMember per target, all on the bot's shared Telegram quota.
-		resolveLimit: ratelimit.New(d.Store, "resolve", resolvesPerHour, time.Hour, d.Now),
 		refreshLimit: ratelimit.New(d.Store, "refresh", 1, time.Minute, d.Now),
 		refreshing:   &inFlight{running: map[int64]bool{}},
 		streams:      newStreamLimiter(streamsPerSession),
 	}
 
 	r := chi.NewRouter()
-	r.Use(accessLog(d.Log), recoverer)
+	if d.Metrics == nil {
+		d.Metrics = metrics.New()
+	}
+	responses := d.Metrics.Counter("quoker_http_responses_total", "Public API responses by status code.", "code")
+	r.Use(accessLog(d.Log, responses), recoverer)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errs.New(errs.NotFound, "no such route"))
 	})

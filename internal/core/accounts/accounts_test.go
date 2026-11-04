@@ -331,3 +331,22 @@ func mustUser(t *testing.T, f *fixture, id int64) User {
 	}
 	return u
 }
+
+// TestBootstrapInviteReplacesPrevious: only the newest bootstrap code works
+// (REVIEW L10).
+func TestBootstrapInviteReplacesPrevious(t *testing.T) {
+	f := newFixture(t, nil)
+	first, _, err := f.svc.CreateBootstrapInvite(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := f.svc.CreateBootstrapInvite(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = f.svc.Register(f.ctx, Registration{InviteCode: first, DeviceID: "dev", DeviceName: "Pixel"})
+	wantCode(t, err, errs.InvalidInvite)
+	if _, u := f.register(second); u.Role != RoleAdmin {
+		t.Fatalf("role = %s", u.Role)
+	}
+}

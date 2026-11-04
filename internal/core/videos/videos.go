@@ -200,7 +200,7 @@ func (s *Service) ApplyResolveResult(ctx context.Context, _ string, r *linkv1.Re
 			  width         = excluded.width,
 			  height        = excluded.height,
 			  no_watermark  = excluded.no_watermark,
-			  has_thumbnail = excluded.has_thumbnail,
+			  has_thumbnail = MAX(has_thumbnail, excluded.has_thumbnail), -- a failed re-upload keeps the cover we have
 			  canonical_url = excluded.canonical_url,
 			  expires_at    = excluded.expires_at,
 			  last_access_at= excluded.last_access_at`,

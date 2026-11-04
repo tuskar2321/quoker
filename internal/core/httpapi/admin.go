@@ -95,7 +95,7 @@ func (s *server) createInvite(w http.ResponseWriter, r *http.Request) {
 func (s *server) revokeInvite(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "invite_id")
 	if !ok {
-		writeError(w, r, errs.New(errs.NotFound, "bad invite id"))
+		writeError(w, r, errs.New(errs.InvalidRequest, "bad invite id"))
 		return
 	}
 	if err := s.acc.RevokeInvite(r.Context(), id); err != nil {
@@ -140,7 +140,7 @@ func (s *server) unblockUser(w http.ResponseWriter, r *http.Request) {
 func (s *server) withUserID(w http.ResponseWriter, r *http.Request, fn func(int64) error) {
 	id, ok := pathID(r, "user_id")
 	if !ok {
-		writeError(w, r, errs.New(errs.NotFound, "bad user id"))
+		writeError(w, r, errs.New(errs.InvalidRequest, "bad user id"))
 		return
 	}
 	if err := fn(id); err != nil {

@@ -9,18 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
-	linkv1 "github.com/tuskar2321/quoker/gen/quoker/link/v1"
 	"github.com/tuskar2321/quoker/internal/core/botapi"
 	"github.com/tuskar2321/quoker/internal/core/files"
+	"github.com/tuskar2321/quoker/internal/core/link"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
 	"github.com/tuskar2321/quoker/internal/shared/errs"
@@ -253,7 +250,7 @@ func (s *Service) platformStats(ctx context.Context, since time.Time) (map[strin
 		if err := rows.Scan(&kind, &payload, &status, &code); err != nil {
 			return nil, fmt.Errorf("scan task stats: %w", err)
 		}
-		p := taskPlatform(kind, payload)
+		p := link.TaskPlatform(kind, payload)
 		if p == "" {
 			continue
 		}
@@ -269,35 +266,6 @@ func (s *Service) platformStats(ctx context.Context, since time.Time) (map[strin
 		}
 	}
 	return out, rows.Err()
-}
-
-func taskPlatform(kind string, payload []byte) string {
-	var raw string
-	switch kind {
-	case "send_video", "bot_call":
-		return "telegram"
-	case "resolve":
-		var t linkv1.ResolveTask
-		if proto.Unmarshal(payload, &t) == nil {
-			raw = t.Url
-		}
-	case "download":
-		var t linkv1.DownloadTask
-		if proto.Unmarshal(payload, &t) == nil {
-			raw = t.Url
-		}
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	switch h := u.Hostname(); {
-	case strings.HasSuffix(h, "tiktok.com"):
-		return "tiktok"
-	case strings.HasSuffix(h, "instagram.com"):
-		return "instagram"
-	}
-	return ""
 }
 
 // StatusText renders Status for the /status command.

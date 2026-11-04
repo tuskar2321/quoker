@@ -56,7 +56,7 @@
 ## Наблюдаемость
 
 - Логи — JSON (`slog`), поля: `ts`, `level`, `msg`, `component`, `request_id`, `task_id`, `user_id`, `worker_id`, `video_id`, `error_code`.
-- Метрики (`/metrics`, Prometheus-формат): длительность резолва и скачивания по платформам, ошибки по кодам, размер очереди, подключённые воркеры, объём кэша, HTTP-ответы по кодам.
+- Метрики (`/metrics`, Prometheus-формат) на внутреннем порту ядра `8081`, только для `TRUSTED_PROXIES` (наружу Caddy его не пропускает): `quoker_task_duration_seconds{kind,platform}` — от постановки до успешного результата, `quoker_task_errors_total{kind,code}`, `quoker_queue_tasks{kind,status}`, `quoker_workers_connected`, `quoker_cache_bytes`, `quoker_cache_limit_bytes`, `quoker_http_responses_total{code}`.
 - `/healthz` — живость процесса; `/readyz` — БД доступна, миграции применены.
 
 ## Совместимость

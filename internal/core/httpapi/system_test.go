@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
+	"github.com/tuskar2321/quoker/internal/core/queue"
+	"github.com/tuskar2321/quoker/internal/core/targets"
 )
 
 func TestAdminSystemEndpoints(t *testing.T) {
@@ -66,5 +68,24 @@ func TestRefreshTargets(t *testing.T) {
 	}
 	if r := e.do(req{method: http.MethodPost, path: "/v1/targets/refresh", token: tok}); r.status != http.StatusAccepted {
 		t.Fatalf("linked: %d %s", r.status, r.raw)
+	}
+}
+
+// TestContractShapes: nullable target fields are present as null and only
+// resolve/download tasks are visible (REVIEW K1, K3).
+func TestContractShapes(t *testing.T) {
+	e := newEnv(t)
+	tok, uid := e.user(accounts.RoleUser)
+	ctx := context.Background()
+	if _, err := e.targets.Upsert(ctx, targets.Target{OwnerUserID: uid, ChatID: -1, Type: "group", Title: "G", Status: targets.StatusActive}); err != nil {
+		t.Fatal(err)
+	}
+	r := e.do(req{method: http.MethodGet, path: "/v1/targets", token: tok})
+	if !strings.Contains(r.raw, `"inactive_reason":null`) || !strings.Contains(r.raw, `"last_used_at":null`) {
+		t.Fatalf("targets = %s", r.raw)
+	}
+	id, _ := e.queue.Enqueue(ctx, queue.EnqueueParams{Kind: queue.KindBotCall, Payload: []byte{}})
+	if r := e.do(req{method: http.MethodGet, path: "/v1/tasks/" + id, token: tok}); r.status != http.StatusNotFound {
+		t.Fatalf("bot_call task visible: %d %s", r.status, r.raw)
 	}
 }

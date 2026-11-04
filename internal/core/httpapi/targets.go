@@ -15,9 +15,9 @@ type targetDTO struct {
 	Title          string  `json:"title"`
 	Type           string  `json:"type"`
 	Status         string  `json:"status"`
-	InactiveReason *string `json:"inactive_reason,omitempty"`
+	InactiveReason *string `json:"inactive_reason"`
 	Hidden         bool    `json:"hidden"`
-	LastUsedAt     *string `json:"last_used_at,omitempty"`
+	LastUsedAt     *string `json:"last_used_at"`
 }
 
 func toTargetDTO(t targets.Target) targetDTO {

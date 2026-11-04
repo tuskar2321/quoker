@@ -48,7 +48,7 @@ type Store struct {
 
 	mu      sync.Mutex
 	pins    map[string]int         // video id → active readers
-	uploads map[string]*sync.Mutex // video id → upload lock
+	uploads map[string]*uploadLock // video id → upload lock
 }
 
 // New creates the cache directories under root.
@@ -66,7 +66,7 @@ func New(st *store.Store, root string, maxBytes int64, now func() time.Time, log
 	}
 	return &Store{
 		st: st, root: root, maxBytes: maxBytes, now: now, log: log,
-		pins: map[string]int{}, uploads: map[string]*sync.Mutex{},
+		pins: map[string]int{}, uploads: map[string]*uploadLock{},
 	}, nil
 }
 
@@ -213,16 +213,29 @@ func (s *Store) Append(id string, from, total int64, body io.Reader) (complete b
 	return true, nil
 }
 
+type uploadLock struct {
+	sync.Mutex
+	users int // holders and waiters; the entry goes when it drops to zero
+}
+
 func (s *Store) lockUpload(id string) func() {
 	s.mu.Lock()
-	m, ok := s.uploads[id]
+	l, ok := s.uploads[id]
 	if !ok {
-		m = &sync.Mutex{}
-		s.uploads[id] = m
+		l = &uploadLock{}
+		s.uploads[id] = l
 	}
+	l.users++
 	s.mu.Unlock()
-	m.Lock()
-	return m.Unlock
+	l.Lock()
+	return func() {
+		l.Unlock()
+		s.mu.Lock()
+		if l.users--; l.users == 0 {
+			delete(s.uploads, id)
+		}
+		s.mu.Unlock()
+	}
 }
 
 // Verify checks the complete file against the size and SHA-256 the worker

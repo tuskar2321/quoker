@@ -334,3 +334,21 @@ func TestResolve_answersBeforeRequestDeadline(t *testing.T) {
 		t.Fatalf("returned after %s, ctx err %v: no time left to answer", took, ctx.Err())
 	}
 }
+
+// TestApplyResolveResult_keepsCover: a re-resolve whose cover upload failed
+// does not hide the cover already stored (REVIEW L16).
+func TestApplyResolveResult_keepsCover(t *testing.T) {
+	_, _, svc, _ := openTest(t)
+	ctx := context.Background()
+	res := &linkv1.ResolveResult{Platform: "tiktok", NativeId: "9", CanonicalUrl: "https://www.tiktok.com/@a/video/9", ThumbnailUploaded: true}
+	if err := svc.ApplyResolveResult(ctx, "", res, ""); err != nil {
+		t.Fatal(err)
+	}
+	res.ThumbnailUploaded = false
+	if err := svc.ApplyResolveResult(ctx, "", res, ""); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := svc.Get(ctx, "tiktok:9"); err != nil || !v.HasThumbnail {
+		t.Fatalf("video = %+v, %v", v, err)
+	}
+}

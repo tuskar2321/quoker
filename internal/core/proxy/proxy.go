@@ -6,6 +6,7 @@ package proxy
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 )
@@ -56,4 +57,15 @@ func (t Trusted) Contains(addr string) bool {
 		}
 	}
 	return false
+}
+
+// Only serves h to trusted peers and answers 403 to everyone else.
+func Only(t Trusted, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !t.Contains(r.RemoteAddr) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

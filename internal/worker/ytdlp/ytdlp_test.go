@@ -197,3 +197,21 @@ func TestDownload_maxFilesize(t *testing.T) {
 		t.Fatalf("oversized file was written: %v", entries)
 	}
 }
+
+// TestMetadata_deletedInstagramPost: when cookies do not unlock a post it is
+// gone, not a login problem, and no cookie alert should follow (REVIEW L12).
+func TestMetadata_deletedInstagramPost(t *testing.T) {
+	r, calls := runner(t, ytdlptest.Scenario{GoneEvenWithCookie: true})
+	_, err := r.Metadata(context.Background(), "https://www.instagram.com/reel/x/", "cookies")
+	if !errs.Is(err, errs.PrivateVideo) {
+		t.Fatalf("err = %v, want private_video", err)
+	}
+	if len(calls()) != 2 {
+		t.Fatalf("calls = %d, want a retry with cookies", len(calls()))
+	}
+	// Without cookies to try, it stays a login problem for the admin.
+	r2, _ := runner(t, ytdlptest.Scenario{GoneEvenWithCookie: true})
+	if _, err := r2.Metadata(context.Background(), "https://www.instagram.com/reel/x/", ""); !errs.Is(err, errs.LoginRequired) {
+		t.Fatalf("no cookies: err = %v", err)
+	}
+}

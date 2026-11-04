@@ -132,7 +132,15 @@ func (r *Runner) withCookies(rawURL, cookies string, fn func(extra []string) err
 	if err := os.WriteFile(file, []byte(cookies), 0o600); err != nil {
 		return false, fmt.Errorf("write cookies: %w", err)
 	}
-	return true, fn([]string{"--cookies", file})
+	err = fn([]string{"--cookies", file})
+	var de *errs.Error
+	if errs.Is(err, errs.LoginRequired) && errors.As(err, &de) &&
+		strings.Contains(strings.ToLower(de.Detail), "requested content is not available") {
+		// Instagram says this for deleted or private posts too; with valid
+		// cookies it means the post is gone, and no cookie alert is due.
+		return true, errs.New(errs.PrivateVideo, de.Detail)
+	}
+	return true, err
 }
 
 func (r *Runner) run(ctx context.Context, timeout time.Duration, dir string, args []string) (stdout, stderr []byte, err error) {

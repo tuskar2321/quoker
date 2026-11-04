@@ -246,7 +246,10 @@ func (h *Handler) onMembership(ctx context.Context, cm *chatMemberUpdated) error
 		if err != nil {
 			return err
 		}
-		if !linked || u.Status == accounts.StatusBlocked {
+		if u.Status == accounts.StatusBlocked {
+			return nil // say nothing in a shared chat about someone's block
+		}
+		if !linked {
 			return h.say(ctx, cm.Chat.ID, textGroupNeedLink)
 		}
 		if _, err := h.d.Targets.Upsert(ctx, targets.Target{

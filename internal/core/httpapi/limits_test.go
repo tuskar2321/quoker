@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +72,19 @@ func TestInFlight(t *testing.T) {
 	f.done(1)
 	if !f.start(1) {
 		t.Fatal("slot not released")
+	}
+}
+
+// TestResponseMetrics: every response is counted by status (REVIEW N1).
+func TestResponseMetrics(t *testing.T) {
+	e := newEnv(t)
+	e.do(req{method: http.MethodGet, path: "/healthz"})
+	e.do(req{method: http.MethodGet, path: "/v1/me"}) // 401
+	rec := httptest.NewRecorder()
+	e.metrics.Handler(slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil)) //nolint:noctx // test
+	for _, want := range []string{`quoker_http_responses_total{code="200"} 1`, `quoker_http_responses_total{code="401"} 1`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, rec.Body.String())
+		}
 	}
 }

@@ -382,3 +382,20 @@ func TestCookiesUpload(t *testing.T) {
 		t.Fatalf("reply = %q", got)
 	}
 }
+
+// TestGroupAddedByBlockedUser: nothing is said in the shared chat and no
+// target appears (REVIEW L15).
+func TestGroupAddedByBlockedUser(t *testing.T) {
+	e := newEnv(t)
+	uid := e.user(accounts.RoleUser, 600, "max")
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE users SET status = 'blocked' WHERE id = ?`, uid); err != nil {
+		t.Fatal(err)
+	}
+	e.handle(membership(-100, "supergroup", 600, "left", "member", false))
+	if box := e.outbox(); len(box) != 0 {
+		t.Fatalf("messages = %+v", box)
+	}
+	if items, _ := e.targets.List(context.Background(), uid, true); len(items) != 0 {
+		t.Fatalf("targets = %+v", items)
+	}
+}

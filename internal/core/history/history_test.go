@@ -197,3 +197,27 @@ func TestLimitsAndCleanup(t *testing.T) {
 		t.Fatalf("after cleanup: history_videos=%d history=%d", n, old)
 	}
 }
+
+// TestPaginationIsStable: an action on a later video while paging neither
+// drops it nor shows it twice (REVIEW L18).
+func TestPaginationIsStable(t *testing.T) {
+	e := newEnv(t)
+	for i := range 3 {
+		id := fmt.Sprintf("tiktok:%d", i)
+		e.video(id)
+		e.action(e.uid, id, "resolved", "", time.Duration(i)*time.Minute)
+	}
+	first := e.list("", 1)                           // tiktok:0, the newest
+	e.action(e.uid, "tiktok:2", "downloaded", "", 0) // the oldest moves to the top
+	seen := []string{first.Items[0].Video.ID}
+	for cursor := first.NextCursor; cursor != ""; {
+		p := e.list(cursor, 1)
+		for _, it := range p.Items {
+			seen = append(seen, it.Video.ID)
+		}
+		cursor = p.NextCursor
+	}
+	if fmt.Sprint(seen) != "[tiktok:0 tiktok:1 tiktok:2]" {
+		t.Fatalf("seen = %v", seen)
+	}
+}

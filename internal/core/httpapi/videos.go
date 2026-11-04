@@ -142,6 +142,12 @@ func (s *server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	// Only the tasks the API hands out are visible; sends and bot calls
+	// have their own endpoints or none.
+	if task.Kind != "resolve" && task.Kind != "download" {
+		writeError(w, r, errs.New(errs.NotFound, "task not found"))
+		return
+	}
 	resp := taskDTO{ID: task.ID, Kind: task.Kind, Status: publicTaskStatus(task.Status)}
 	if task.Progress > 0 {
 		resp.Progress = &task.Progress
