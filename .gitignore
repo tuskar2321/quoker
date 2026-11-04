@@ -25,6 +25,9 @@ deploy/*/backups/
 *.db
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 # android
 android/.gradle/
 android/.kotlin/
