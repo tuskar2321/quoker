@@ -18,7 +18,9 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/accounts"
 	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/files"
+	"github.com/tuskar2321/quoker/internal/core/history"
 	"github.com/tuskar2321/quoker/internal/core/queue"
+	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
@@ -37,6 +39,7 @@ type env struct {
 	videos   *videos.Service
 	files    *files.Store
 	queue    *queue.Store
+	releases *releases.Store
 	settings *settings.Store
 	now      time.Time
 }
@@ -56,6 +59,7 @@ func newEnv(t *testing.T) *env {
 	q := queue.New(st, clock)
 	vids := videos.New(st, q, clock)
 	e.videos, e.queue = vids, q
+	e.releases = releases.New(st, filepath.Join(t.TempDir(), "releases"), clock)
 	if e.files, err = files.New(st, t.TempDir(), 1<<30, clock, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +69,8 @@ func newEnv(t *testing.T) *env {
 		Targets:  e.targets,
 		Sends:    sends.New(st, q, vids, e.targets, clock),
 		Files:    e.files,
+		History:  history.New(st, clock),
+		Releases: e.releases,
 		Store:    st,
 		Version:  "test",
 		Admin: admin.New(admin.Deps{

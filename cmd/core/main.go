@@ -6,6 +6,9 @@
 //	core [serve]                        run the server
 //	core admin bootstrap                print the first admin invite
 //	core settings set <key> <value|->   store a setting; "-" reads stdin
+//	core release add <version_code> <version_name> <apk> [changelog|-]
+//	                                    publish an APK; "-" reads the changelog from stdin
+//	core release list                   list published APKs
 package main
 
 import (
@@ -19,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,9 +35,11 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/botapi"
 	"github.com/tuskar2321/quoker/internal/core/config"
 	"github.com/tuskar2321/quoker/internal/core/files"
+	"github.com/tuskar2321/quoker/internal/core/history"
 	"github.com/tuskar2321/quoker/internal/core/httpapi"
 	corelink "github.com/tuskar2321/quoker/internal/core/link"
 	"github.com/tuskar2321/quoker/internal/core/queue"
+	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/results"
 	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
@@ -52,7 +58,8 @@ const (
 	// shutdownTimeout is the graceful shutdown budget (docs/11-nfr-security.md).
 	shutdownTimeout = 20 * time.Second
 	cliTimeout      = 30 * time.Second
-	usage           = "usage: core [serve] | core admin bootstrap | core settings set <key> <value|->"
+	usage           = "usage: core [serve] | core admin bootstrap | core settings set <key> <value|-> | " +
+		"core release add <version_code> <version_name> <apk> [changelog|-] | core release list"
 )
 
 func main() {
@@ -96,6 +103,49 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 			}
 			_, err := fmt.Fprintf(stdout, "%s updated\n", key)
 			return err
+		})
+	case len(args) >= 5 && len(args) <= 6 && args[0] == "release" && args[1] == "add":
+		code, err := strconv.ParseInt(args[2], 10, 64)
+		if err != nil {
+			return fmt.Errorf("version_code %q: %w", args[2], err)
+		}
+		changelog := ""
+		if len(args) == 6 {
+			if changelog = args[5]; changelog == "-" {
+				if changelog, err = readAll(stdin); err != nil {
+					return err
+				}
+			}
+		}
+		return withStore(cfg, func(ctx context.Context, st *store.Store) error {
+			r, err := releases.New(st, cfg.ReleasesDir, nil).Add(ctx, code, args[3], args[4], changelog)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "published %s (%d) as %s, sha256 %s\n", r.VersionName, r.VersionCode, r.FileName, r.SHA256)
+			return err
+		})
+	case len(args) == 2 && args[0] == "release" && args[1] == "list":
+		return withStore(cfg, func(ctx context.Context, st *store.Store) error {
+			rows, err := st.DB().QueryContext(ctx,
+				`SELECT version_code, version_name, apk_path, published_at FROM app_releases ORDER BY version_code DESC`)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var (
+					code, ms   int64
+					name, file string
+				)
+				if err := rows.Scan(&code, &name, &file, &ms); err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintf(stdout, "%d\t%s\t%s\t%s\n", code, name, file, time.UnixMilli(ms).UTC().Format(time.RFC3339)); err != nil {
+					return err
+				}
+			}
+			return rows.Err()
 		})
 	}
 	return errors.New(usage)
@@ -150,6 +200,9 @@ func serve(cfg config.Config) error {
 		return err
 	}
 	go cache.Run(ctx, files.CleanupInterval)
+	releasesSvc := releases.New(st, cfg.ReleasesDir, nil)
+	historySvc := history.New(st, nil)
+	go historySvc.Run(ctx, history.CleanupInterval, func(err error) { log.Warn("history cleanup", "err", err) })
 	if cfg.UploadBase == "" {
 		log.Warn("UPLOAD_BASE and DOMAIN are empty: workers cannot upload covers and files")
 	}
@@ -196,18 +249,21 @@ func serve(cfg config.Config) error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.New(httpapi.Deps{
-			Accounts: accSvc,
-			Bot:      botSvc,
-			Videos:   videosSvc,
-			Targets:  targetsSvc,
-			Sends:    sendsSvc,
-			Files:    cache,
-			Admin:    adminSvc,
-			Store:    st,
-			Version:  version,
-			Settings: set,
-			Ready:    st.Ready,
-			Log:      log,
+			Accounts:  accSvc,
+			Bot:       botSvc,
+			Videos:    videosSvc,
+			Targets:   targetsSvc,
+			Sends:     sendsSvc,
+			Files:     cache,
+			History:   historySvc,
+			Releases:  releasesSvc,
+			PublicURL: cfg.PublicURL,
+			Admin:     adminSvc,
+			Store:     st,
+			Version:   version,
+			Settings:  set,
+			Ready:     st.Ready,
+			Log:       log,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

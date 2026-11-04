@@ -384,3 +384,29 @@ func TestPollerHandover(t *testing.T) {
 		}
 	}
 }
+
+func TestPurgeUpdates(t *testing.T) {
+	f := newTestFixture(t)
+	old := f.now.Add(-8 * 24 * time.Hour).UnixMilli()
+	if _, err := f.srv.st.DB().ExecContext(f.ctx,
+		`INSERT INTO bot_updates (update_id, processed_at) VALUES (1, ?), (2, ?)`, old, f.now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.srv.purgeUpdates(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	rows, err := f.srv.st.DB().QueryContext(f.ctx, `SELECT update_id FROM bot_updates`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		_ = rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	if len(ids) != 1 || ids[0] != 2 {
+		t.Fatalf("left = %v", ids)
+	}
+}

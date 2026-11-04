@@ -15,7 +15,9 @@ import (
 	"github.com/tuskar2321/quoker/internal/core/admin"
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/files"
+	"github.com/tuskar2321/quoker/internal/core/history"
 	"github.com/tuskar2321/quoker/internal/core/ratelimit"
+	"github.com/tuskar2321/quoker/internal/core/releases"
 	"github.com/tuskar2321/quoker/internal/core/sends"
 	"github.com/tuskar2321/quoker/internal/core/settings"
 	"github.com/tuskar2321/quoker/internal/core/store"
@@ -43,13 +45,17 @@ type Deps struct {
 	Targets  *targets.Service
 	Sends    *sends.Service
 	Files    *files.Store
-	Admin    *admin.Service
-	Store    *store.Store // read-only queries for admin status
-	Settings *settings.Store
-	Version  string                      // core build version
-	Ready    func(context.Context) error // /readyz probe
-	Log      *slog.Logger
-	Now      func() time.Time // defaults to time.Now
+	History  *history.Service
+	Releases *releases.Store
+	// PublicURL prefixes apk_url; empty derives it from the request.
+	PublicURL string
+	Admin     *admin.Service
+	Store     *store.Store // read-only queries for admin status
+	Settings  *settings.Store
+	Version   string                      // core build version
+	Ready     func(context.Context) error // /readyz probe
+	Log       *slog.Logger
+	Now       func() time.Time // defaults to time.Now
 }
 
 type server struct {
@@ -59,6 +65,9 @@ type server struct {
 	targets   *targets.Service
 	sends     *sends.Service
 	files     *files.Store
+	history   *history.Service
+	releases  *releases.Store
+	publicURL string
 	admin     *admin.Service
 	st        *store.Store
 	version   string
@@ -82,6 +91,9 @@ func New(d Deps) http.Handler {
 		targets:   d.Targets,
 		sends:     d.Sends,
 		files:     d.Files,
+		history:   d.History,
+		releases:  d.Releases,
+		publicURL: d.PublicURL,
 		admin:     d.Admin,
 		st:        d.Store,
 		version:   d.Version,
@@ -104,53 +116,61 @@ func New(d Deps) http.Handler {
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	r.Get("/readyz", s.readyz)
+	r.Get("/download/{file}", s.downloadAPK)
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(limitBody, requireVersion(d.Settings))
+		r.Use(limitBody)
 
-		// File streaming is bounded by the client, not by apiTimeout.
-		r.With(requireSession(d.Accounts)).Get("/videos/{video_id}/file", s.videoFile)
-
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.Timeout(apiTimeout))
-			r.Post("/auth/register", s.registerUser)
-		})
+		// Outside the version check: an app below the minimum must still
+		// learn where to get the update.
+		r.With(middleware.Timeout(apiTimeout)).Get("/app/version", s.appVersion)
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Timeout(apiTimeout), requireSession(d.Accounts))
-			r.Post("/auth/logout", s.logout)
-			r.Get("/me", s.me)
-			r.Post("/auth/telegram/link", s.createTelegramLink)
-			r.Get("/auth/telegram/status", s.telegramLinkStatus)
-			r.Delete("/auth/telegram", s.unlinkTelegram)
+			r.Use(requireVersion(d.Settings))
 
-			r.Post("/videos/resolve", s.resolveVideo)
-			r.Get("/videos/{video_id}", s.getVideo)
-			r.Get("/videos/{video_id}/thumbnail", s.videoThumbnail)
-			r.Post("/videos/{video_id}/prepare", s.prepareVideo)
-			r.Post("/videos/{video_id}/downloaded", s.videoDownloaded)
-			r.Get("/tasks/{task_id}", s.getTask)
+			// File streaming is bounded by the client, not by apiTimeout.
+			r.With(requireSession(d.Accounts)).Get("/videos/{video_id}/file", s.videoFile)
 
-			r.Get("/targets", s.listTargets)
-			r.Post("/targets/refresh", s.refreshTargets)
-			r.Patch("/targets/{id}", s.patchTarget)
+			r.With(middleware.Timeout(apiTimeout)).Post("/auth/register", s.registerUser)
 
-			r.Post("/sends", s.createSend)
-			r.Get("/sends/{id}", s.getSend)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.Timeout(apiTimeout), requireSession(d.Accounts))
+				r.Post("/auth/logout", s.logout)
+				r.Get("/me", s.me)
+				r.Post("/auth/telegram/link", s.createTelegramLink)
+				r.Get("/auth/telegram/status", s.telegramLinkStatus)
+				r.Delete("/auth/telegram", s.unlinkTelegram)
 
-			r.Route("/admin", func(r chi.Router) {
-				r.Use(requireAdmin)
-				r.Get("/status", s.adminStatus)
-				r.Get("/workers", s.listWorkers)
-				r.Post("/workers", s.allowWorker)
-				r.Delete("/workers/{worker_id}", s.revokeWorker)
-				r.Put("/instagram-cookies", s.putInstagramCookies)
-				r.Get("/invites", s.listInvites)
-				r.Post("/invites", s.createInvite)
-				r.Delete("/invites/{invite_id}", s.revokeInvite)
-				r.Get("/users", s.listUsers)
-				r.Post("/users/{user_id}/block", s.blockUser)
-				r.Post("/users/{user_id}/unblock", s.unblockUser)
+				r.Post("/videos/resolve", s.resolveVideo)
+				r.Get("/videos/{video_id}", s.getVideo)
+				r.Get("/videos/{video_id}/thumbnail", s.videoThumbnail)
+				r.Post("/videos/{video_id}/prepare", s.prepareVideo)
+				r.Post("/videos/{video_id}/downloaded", s.videoDownloaded)
+				r.Get("/tasks/{task_id}", s.getTask)
+
+				r.Get("/targets", s.listTargets)
+				r.Post("/targets/refresh", s.refreshTargets)
+				r.Patch("/targets/{id}", s.patchTarget)
+
+				r.Get("/history", s.listHistory)
+
+				r.Post("/sends", s.createSend)
+				r.Get("/sends/{id}", s.getSend)
+
+				r.Route("/admin", func(r chi.Router) {
+					r.Use(requireAdmin)
+					r.Get("/status", s.adminStatus)
+					r.Get("/workers", s.listWorkers)
+					r.Post("/workers", s.allowWorker)
+					r.Delete("/workers/{worker_id}", s.revokeWorker)
+					r.Put("/instagram-cookies", s.putInstagramCookies)
+					r.Get("/invites", s.listInvites)
+					r.Post("/invites", s.createInvite)
+					r.Delete("/invites/{invite_id}", s.revokeInvite)
+					r.Get("/users", s.listUsers)
+					r.Post("/users/{user_id}/block", s.blockUser)
+					r.Post("/users/{user_id}/unblock", s.unblockUser)
+				})
 			})
 		})
 	})

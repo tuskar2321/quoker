@@ -38,6 +38,10 @@ const (
 	// takes over getUpdates (docs/04-core-worker-protocol.md).
 	pollerGrace = 30 * time.Second
 	pollerCheck = 5 * time.Second
+	// processedUpdatesTTL is how long update ids are kept for dedup
+	// (docs/05-data-model.md); Telegram never re-sends older ones.
+	processedUpdatesTTL = 7 * 24 * time.Hour
+	purgeInterval       = time.Hour
 	// headerFingerprint is set by Caddy after mTLS verification.
 	headerFingerprint = "X-Client-Cert-Fingerprint"
 	// headerCertCN is set by Caddy to the certificate's Common Name.
@@ -124,6 +128,7 @@ func New(ctx context.Context, d Deps) *Server {
 	}
 	go srv.leaseRecoveryLoop(ctx)
 	go srv.updateLoop(ctx)
+	go srv.purgeLoop(ctx)
 	go srv.pollerLoop(ctx)
 	return srv
 }
@@ -748,4 +753,26 @@ func (s *Server) checkPoller(ctx context.Context) {
 	if err := s.SendConfig(ctx, next); err != nil {
 		s.log.Warn("send poller config", "err", err)
 	}
+}
+
+// purgeLoop forgets processed update ids older than processedUpdatesTTL.
+func (s *Server) purgeLoop(ctx context.Context) {
+	t := time.NewTicker(purgeInterval)
+	defer t.Stop()
+	for {
+		if err := s.purgeUpdates(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("purge bot updates", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func (s *Server) purgeUpdates(ctx context.Context) error {
+	_, err := s.st.DB().ExecContext(ctx,
+		`DELETE FROM bot_updates WHERE processed_at < ?`, s.now().Add(-processedUpdatesTTL).UnixMilli())
+	return err
 }

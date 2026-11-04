@@ -124,14 +124,16 @@
 
 | Метод | Путь | Ответ |
 | --- | --- | --- |
-| GET | `/v1/history` | `{items: [{id, video, actions: [{type: resolved\|downloaded\|sent\|send_failed, target_title, at}]}], next_cursor}` — по одной записи на видео, действия внутри |
+| GET | `/v1/history` | `{items: [{id, video, actions: [{type: resolved\|downloaded\|sent\|send_failed, target_title, send_id, at}]}], next_cursor}` — по одной записи на видео, действия внутри |
+
+Записи упорядочены по последнему действию с видео, действия внутри — от новых к старым; в выдачу попадают 200 последних действий за 90 дней. `resolved` пишется, когда пользователь получил видео (ответ резолва или готовая задача), не чаще раза в сутки на видео. Если кэш ядра уже забыл видео, `video` собирается из `history_videos`: без обложки и подписи, `file.status = none`. `send_id` нужен для «Повторить»: по нему клиент берёт цель из `GET /v1/sends/{id}`.
 
 ### Приложение
 
 | Метод | Путь | Ответ |
 | --- | --- | --- |
-| GET | `/v1/app/version` | `{version_code, version_name, apk_url, sha256, min_supported_version_code, changelog}` |
-| GET | `/download/quoker-<version_name>.apk` | APK (без авторизации, ссылка из `version`) |
+| GET | `/v1/app/version` | `{version_code, version_name, apk_url, sha256, min_supported_version_code, changelog}`; `404 not_found`, пока не опубликовано ни одной версии. Не проверяет `X-Quoker-Version-Code`: устаревшее приложение должно узнать, откуда обновиться |
+| GET | `/download/quoker-<version_name>.apk` | APK (без авторизации, ссылка из `version`), поддерживает `Range`, `ETag` = `sha256`; отдаются только опубликованные версии |
 
 ### Администрирование (роль `admin`)
 

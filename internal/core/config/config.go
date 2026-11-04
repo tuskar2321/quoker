@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 )
 
 // Config is the core runtime configuration.
@@ -17,6 +18,9 @@ type Config struct {
 	GRPCAddr      string // GRPC_ADDR, worker link, default :9090
 	CacheDir      string // CACHE_DIR, default ./cache
 	CacheMaxBytes int64  // CACHE_MAX_BYTES, default 3 GiB
+	ReleasesDir   string // RELEASES_DIR, APKs, default ./releases
+	// PublicURL prefixes apk_url: PUBLIC_URL, or https://api.<DOMAIN>.
+	PublicURL string
 	// UploadBase is where workers PUT files: UPLOAD_BASE, or
 	// https://w.<DOMAIN>/internal/v1 when only DOMAIN is set.
 	UploadBase string
@@ -32,11 +36,18 @@ func Load(getenv func(string) string) (Config, error) {
 		GRPCAddr:      or(getenv("GRPC_ADDR"), ":9090"),
 		CacheDir:      or(getenv("CACHE_DIR"), "./cache"),
 		CacheMaxBytes: 3 << 30,
+		ReleasesDir:   or(getenv("RELEASES_DIR"), "./releases"),
+		PublicURL:     strings.TrimRight(getenv("PUBLIC_URL"), "/"),
 		UploadBase:    getenv("UPLOAD_BASE"),
 		LogLevel:      or(getenv("LOG_LEVEL"), "info"),
 	}
-	if c.UploadBase == "" && getenv("DOMAIN") != "" {
-		c.UploadBase = "https://w." + getenv("DOMAIN") + "/internal/v1"
+	if d := getenv("DOMAIN"); d != "" {
+		if c.UploadBase == "" {
+			c.UploadBase = "https://w." + d + "/internal/v1"
+		}
+		if c.PublicURL == "" {
+			c.PublicURL = "https://api." + d
+		}
 	}
 	var errs []error
 	if c.DBPath == "" {

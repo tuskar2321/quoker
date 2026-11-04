@@ -93,7 +93,7 @@ w.{$DOMAIN} {
 
 ### Переменные окружения
 
-`core/.env`: `DOMAIN`, `ACME_EMAIL`, `DB_PATH=/data/quoker.db`, `CACHE_DIR=/cache`, `CACHE_MAX_BYTES=3221225472`, `HTTP_ADDR=:8080`, `FILES_ADDR=:8081`, `GRPC_ADDR=:9090`, `UPLOAD_BASE` (по умолчанию `https://w.<DOMAIN>/internal/v1`; задаётся только для локальной разработки), `RELEASES_DIR=/releases`, `BACKUP_DIR=/backups`, `LOG_LEVEL=info`, `TZ=Europe/Moscow`. Токен бота и cookies — не здесь, а в БД (`/status`, `/cookies`, CLI `core settings set bot_token`).
+`core/.env`: `DOMAIN`, `ACME_EMAIL`, `DB_PATH=/data/quoker.db`, `CACHE_DIR=/cache`, `CACHE_MAX_BYTES=3221225472`, `HTTP_ADDR=:8080`, `FILES_ADDR=:8081`, `GRPC_ADDR=:9090`, `UPLOAD_BASE` (по умолчанию `https://w.<DOMAIN>/internal/v1`; задаётся только для локальной разработки), `RELEASES_DIR=/releases`, `PUBLIC_URL` (по умолчанию `https://api.<DOMAIN>`, префикс `apk_url`), `BACKUP_DIR=/backups`, `LOG_LEVEL=info`, `TZ=Europe/Moscow`. Токен бота и cookies — не здесь, а в БД (`/status`, `/cookies`, CLI `core settings set bot_token`).
 
 `worker/.env`: `CORE_ADDR=w.<домен>:443`, `TRANSPORT=direct|reality`, `CLIENT_CERT=/certs/worker.crt`, `CLIENT_KEY=/certs/worker.key`, `CA_CERT=/certs/ca.crt`, `MAX_PARALLEL=2`, `TMP_DIR=/tmp/quoker`, `TMP_CACHE_MAX_BYTES=1073741824`, `YTDLP_BIN=yt-dlp`, `USER_AGENT=<мобильный UA, по умолчанию встроенный>`, `LOG_LEVEL=info`.
 
@@ -115,7 +115,7 @@ w.{$DOMAIN} {
 | `release-core` | тег `core-v*` | Образ → GHCR; SSH на ядро: снимок БД, `docker compose pull core && up -d core`, проверка `/healthz` |
 | `release-worker` | тег `worker-v*` | Образ с последним yt-dlp → GHCR; SSH на воркер: `pull && up -d` |
 | `ytdlp-refresh` | раз в неделю, вручную | Пересборка и выкладка воркера с новым yt-dlp |
-| `release-android` | тег `app-v*` | Подписанный APK; SCP на ядро в `/opt/app/releases/`; регистрация версии через `core release add` по SSH |
+| `release-android` | тег `app-v*` | Подписанный APK; SCP на ядро в `/opt/app/releases/quoker-<version_name>.apk`; регистрация по SSH: `docker compose exec -T core core release add <version_code> <version_name> /releases/quoker-<version_name>.apk - < changelog.txt` (проверяет, что это APK, считает `sha256`; занятые `version_code`/`version_name` отклоняет). Список — `core release list` |
 | `mirror-images` | вручную, раз в месяц | Зеркалирование `caddy` и `xray` в GHCR |
 
 Секреты GitHub: `CORE_SSH_HOST`, `CORE_SSH_KEY`, `WORKER_SSH_HOST`, `WORKER_SSH_KEY`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Ключ CA в GitHub не хранится. Образы тегируются версией и `sha`, `latest` не используется. Откат — повторный запуск workflow на предыдущем теге.

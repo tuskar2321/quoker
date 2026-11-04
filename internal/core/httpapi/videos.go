@@ -114,6 +114,7 @@ func (s *server) resolveVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.Video != nil {
+		s.recordResolved(r, res.Video.ID)
 		writeJSON(w, http.StatusOK, videoResponse{toVideoDTO(res.Video)})
 		return
 	}
@@ -143,6 +144,9 @@ func (s *server) getTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if v != nil {
 		resp.Video = toVideoDTO(v)
+		if task.Kind == "resolve" {
+			s.recordResolved(r, v.ID)
+		}
 	}
 	if resp.Status == "failed" {
 		e := toErrorDTO(errs.CodeOf(task.Err))
