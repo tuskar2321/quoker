@@ -26,6 +26,7 @@ import app.quoker.core.data.repository.VideoRepository
 import app.quoker.core.network.QuokerException
 import java.time.Instant
 import kotlin.time.Duration
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -109,7 +110,16 @@ class FakeSendsRepository : SendsRepository {
         return Send(1000L + calls.size, videoId, targetId, SendStatus.QUEUED, null, null, null)
     }
 
-    override suspend fun get(sendId: Long): Send = error("unused")
+    /** GET /v1/sends/{id}: send id → its target id; a missing id fails with not_found. */
+    val existing = mutableMapOf<Long, Long>()
+    /** When set, GET waits for it: lets a test act before the answer arrives. */
+    var getGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun get(sendId: Long): Send {
+        getGate?.await()
+        val targetId = existing[sendId] ?: throw quokerException("not_found")
+        return Send(sendId, "v", targetId, SendStatus.FAILED, null, null, null)
+    }
 
     override fun poll(sendId: Long, interval: Duration): Flow<Send> = emptyFlow()
 }

@@ -290,6 +290,7 @@ internal fun previewWorker(id: String, connected: Boolean = true, poller: Boolea
     connected = connected,
     version = "1.4.0",
     ytdlpVersion = "2026.10.22",
+    certNotAfter = Instant.parse("2027-11-12T00:00:00Z"),
     lastSeenAt = Instant.parse("2026-11-05T09:40:00Z"),
     isPoller = poller,
 )

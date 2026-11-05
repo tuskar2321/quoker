@@ -148,6 +148,8 @@ class DtoSerializationTest {
         val status = json.decodeFromString<AdminStatusDto>(Samples.ADMIN_STATUS)
         assertEquals(2, status.workers.size)
         assertNull(status.workers[1].version)
+        assertEquals("2027-11-12T00:00:00Z", status.workers[0].certNotAfter)
+        assertNull(status.workers[1].certNotAfter) // Older cores omit the field.
         assertEquals(3, status.queue.queued)
         assertEquals(1, status.errors24h["tiktok"])
         assertEquals(4000L, status.disk.totalBytes)

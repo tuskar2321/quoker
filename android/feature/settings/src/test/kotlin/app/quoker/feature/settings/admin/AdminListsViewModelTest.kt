@@ -235,3 +235,20 @@ class WorkersViewModelTest {
         assertNull(vm.state.value.revokingId)
     }
 }
+
+class CertExpiryTest {
+    @Test
+    fun `expiry follows the 30-day warning of the core`() {
+        val now = Instant.parse("2026-11-05T12:00:00Z")
+        val day = 86_400L
+        val cases = listOf(
+            now.plusSeconds(day * 365) to CertExpiry.Valid,
+            now.plusSeconds(day * 30) to CertExpiry.Valid,
+            now.plusSeconds(day * 30 - 1) to CertExpiry.ExpiresSoon,
+            now.plusSeconds(1) to CertExpiry.ExpiresSoon,
+            now to CertExpiry.Expired,
+            now.minusSeconds(day) to CertExpiry.Expired,
+        )
+        for ((notAfter, expected) in cases) assertEquals(notAfter.toString(), expected, certExpiry(notAfter, now))
+    }
+}

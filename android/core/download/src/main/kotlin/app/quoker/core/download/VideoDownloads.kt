@@ -19,12 +19,16 @@ import androidx.work.workDataOf
 import app.quoker.core.download.DownloadWorker.Companion.toError
 import app.quoker.core.download.internal.DownloadNotifier
 import app.quoker.core.download.internal.DownloadPipeline
+import app.quoker.core.download.internal.SavedVideos
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 
 /** Phone downloads, one unique WorkManager job per video id. */
 interface VideoDownloads {
@@ -62,6 +66,7 @@ interface VideoDownloads {
 internal class WorkManagerVideoDownloads @Inject constructor(
     @ApplicationContext private val context: Context,
     private val pipeline: DownloadPipeline,
+    private val savedVideos: SavedVideos,
 ) : VideoDownloads {
     // Resolved lazily: the app configures WorkManager (HiltWorkerFactory) on first use.
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
@@ -83,10 +88,11 @@ internal class WorkManagerVideoDownloads @Inject constructor(
         pipeline.discard(videoId)
     }
 
-    override fun observe(videoId: String): Flow<DownloadState> =
-        workManager.getWorkInfosForUniqueWorkFlow(uniqueName(videoId))
-            .map { infos -> latest(infos).toDownloadState() }
-            .distinctUntilChanged()
+    override fun observe(videoId: String): Flow<DownloadState> = withSavedFile(
+        work = workManager.getWorkInfosForUniqueWorkFlow(uniqueName(videoId)).map { infos -> latest(infos).toDownloadState() },
+        saved = savedVideos,
+        videoId = videoId,
+    )
 
     override fun needsNotificationPermission(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -116,6 +122,21 @@ internal class WorkManagerVideoDownloads @Inject constructor(
         fun uniqueName(videoId: String) = "download:$videoId"
     }
 }
+
+/**
+ * The work state, or «Сохранено» from [SavedVideos] when WorkManager has nothing (pruned, or a
+ * re-download was cancelled). A saved uri whose file is gone from the gallery becomes Idle.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun withSavedFile(work: Flow<DownloadState>, saved: SavedVideos, videoId: String): Flow<DownloadState> =
+    combine(work.distinctUntilChanged(), saved.observe(videoId)) { state, uri ->
+        if (state == DownloadState.Idle && uri != null) DownloadState.Saved(uri) else state
+    }
+        .distinctUntilChanged()
+        .mapLatest { state ->
+            if (state is DownloadState.Saved && !saved.exists(state.uri)) DownloadState.Idle else state
+        }
+        .distinctUntilChanged()
 
 /** The unfinished job if any, else the most recent one. */
 internal fun latest(infos: List<WorkInfo>): WorkInfo? =

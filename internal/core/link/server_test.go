@@ -2,7 +2,17 @@ package link
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http/httptest"
 	"path/filepath"
@@ -165,10 +175,22 @@ func newTestFixture(t *testing.T) *testFixture {
 // the initial Config. Returns the stream.
 func (f *testFixture) connect(workerID string) linkv1.LinkService_ConnectClient {
 	f.t.Helper()
-	md := metadata.Pairs(
-		"x-client-cert-fingerprint", "fp-"+workerID,
+	return f.connectWith(workerID)
+}
+
+// connectWith is connect with extra metadata pairs (key, value, ...).
+func (f *testFixture) connectWith(workerID string, extra ...string) linkv1.LinkService_ConnectClient {
+	f.t.Helper()
+	return f.connectAs(workerID, "fp-"+workerID, extra...)
+}
+
+// connectAs is connectWith with an explicit certificate fingerprint header.
+func (f *testFixture) connectAs(workerID, fingerprint string, extra ...string) linkv1.LinkService_ConnectClient {
+	f.t.Helper()
+	md := metadata.Pairs(append([]string{
+		"x-client-cert-fingerprint", fingerprint,
 		"x-client-cert-cn", workerID,
-	)
+	}, extra...)...)
 	stream, err := f.stub.Connect(metadata.NewOutgoingContext(f.ctx, md))
 	if err != nil {
 		f.t.Fatal(err)
@@ -707,5 +729,68 @@ func TestTaskMetrics(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, rec.Body.String())
 		}
+	}
+}
+
+// testCertDER returns a self-signed certificate that expires at notAfter.
+func testCertDER(t *testing.T, cn string, notAfter time.Time) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    notAfter.Add(-365 * 24 * time.Hour),
+		NotAfter:     notAfter,
+	}, &x509.Certificate{}, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
+}
+
+// TestCertExpiryRecorded: the client certificate passed by the proxy fills
+// workers.cert_not_after (REVIEW N6); a broken header is ignored.
+func TestCertExpiryRecorded(t *testing.T) {
+	notAfter := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	der := testCertDER(t, "worker-1", notAfter)
+	other := testCertDER(t, "worker-1", notAfter.AddDate(1, 0, 0))
+	sum := sha256.Sum256(der)
+	fingerprint := hex.EncodeToString(sum[:])
+	tests := []struct {
+		name   string
+		header string
+		want   int64 // 0: column stays NULL
+	}{
+		{"valid", base64.StdEncoding.EncodeToString(der), notAfter.UnixMilli()},
+		{"another certificate", base64.StdEncoding.EncodeToString(other), 0},
+		{"not base64", "!!!", 0},
+		{"not a certificate", base64.StdEncoding.EncodeToString([]byte("junk")), 0},
+		{"absent", "", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFixture(t)
+			if _, err := f.srv.st.DB().ExecContext(f.ctx,
+				`UPDATE workers SET fingerprint = ? WHERE id = 'worker-1'`, fingerprint); err != nil {
+				t.Fatal(err)
+			}
+			var extra []string
+			if tc.header != "" {
+				extra = []string{"x-client-cert-der", tc.header}
+			}
+			stream := f.connectAs("worker-1", fingerprint, extra...)
+			defer func() { _ = stream.CloseSend() }()
+			var got sql.NullInt64
+			if err := f.srv.st.DB().QueryRowContext(f.ctx,
+				`SELECT cert_not_after FROM workers WHERE id = 'worker-1'`).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == 0 && got.Valid || tc.want != 0 && got.Int64 != tc.want {
+				t.Fatalf("cert_not_after = %+v, want %d", got, tc.want)
+			}
+		})
 	}
 }

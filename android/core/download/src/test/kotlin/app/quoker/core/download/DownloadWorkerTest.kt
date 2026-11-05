@@ -40,6 +40,7 @@ class DownloadWorkerTest {
             repo,
             RangeFileFetcher(OkHttpClient(), QuokerJson, Dispatchers.IO),
             saver,
+            FakeSavedVideos(),
             File(context.cacheDir, "downloads"),
         )
         val factory = object : WorkerFactory() {

@@ -23,6 +23,8 @@ data class HistoryCard(
     val sentTo: List<String>,
     /** The latest send to some target failed: badge «Ошибка отправки», button «Повторить». */
     val sendFailed: Boolean,
+    /** The newest failed send that is still the target's outcome: «Повторить» resends to its target. */
+    val retrySendId: Long?,
 )
 
 data class HistorySection(val bucket: DayBucket, val cards: List<HistoryCard>)
@@ -43,6 +45,7 @@ fun HistoryItem.toCard(): HistoryCard {
         downloaded = actions.any { it.type == HistoryActionType.DOWNLOADED },
         sentTo = sendActions.filter { it.type == HistoryActionType.SENT }.mapNotNull { it.targetTitle }.distinct(),
         sendFailed = latestPerTarget.any { it.type == HistoryActionType.SEND_FAILED },
+        retrySendId = latestPerTarget.firstOrNull { it.type == HistoryActionType.SEND_FAILED }?.sendId,
     )
 }
 

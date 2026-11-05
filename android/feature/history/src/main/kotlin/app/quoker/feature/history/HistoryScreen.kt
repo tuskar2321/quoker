@@ -75,7 +75,7 @@ fun HistoryScreen(
     onBack: () -> Unit,
     onOpenVideo: (String) -> Unit,
     onDownload: (String) -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (videoId: String, retrySendId: Long?) -> Unit,
     viewModel: HistoryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -97,7 +97,7 @@ internal fun HistoryContent(
     onBack: () -> Unit,
     onOpenVideo: (String) -> Unit,
     onDownload: (String) -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (videoId: String, retrySendId: Long?) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
@@ -135,7 +135,7 @@ private fun HistoryList(
     state: HistoryUiState,
     onOpenVideo: (String) -> Unit,
     onDownload: (String) -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (videoId: String, retrySendId: Long?) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
@@ -184,7 +184,7 @@ private fun HistoryList(
                         divider = card.id != lastCardId,
                         onOpen = { onOpenVideo(card.videoId) },
                         onDownload = { onDownload(card.videoId) },
-                        onSend = { onSend(card.videoId) },
+                        onSend = { onSend(card.videoId, card.retrySendId) },
                     )
                 }
             }
@@ -355,6 +355,7 @@ private fun previewCard(
     downloaded = downloaded,
     sentTo = sentTo,
     sendFailed = failed,
+    retrySendId = if (failed) 1 else null,
 )
 
 private val previewSections = listOf(
@@ -375,7 +376,7 @@ private val previewSections = listOf(
 @Composable
 private fun Preview(state: HistoryUiState) {
     QuokerTheme {
-        HistoryContent(state, {}, {}, {}, {}, {}, {}, {}, zone = previewZone)
+        HistoryContent(state, {}, {}, {}, { _, _ -> }, {}, {}, {}, zone = previewZone)
     }
 }
 

@@ -36,6 +36,17 @@ data class AllowWorkerForm(
     }
 }
 
+enum class CertExpiry { Valid, ExpiresSoon, Expired }
+
+/** The core warns the admin 30 days before a worker certificate expires (docs/06); so does the card. */
+internal val CERT_WARNING_PERIOD: java.time.Duration = java.time.Duration.ofDays(30)
+
+internal fun certExpiry(notAfter: Instant, now: Instant): CertExpiry = when {
+    !notAfter.isAfter(now) -> CertExpiry.Expired
+    notAfter.isBefore(now.plus(CERT_WARNING_PERIOD)) -> CertExpiry.ExpiresSoon
+    else -> CertExpiry.Valid
+}
+
 data class WorkersUiState(
     /** Allowed first (online before offline), then revoked. Null until the first load. */
     val workers: List<Worker>? = null,

@@ -96,7 +96,7 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
                 onBack = { navController.popBackStack() },
                 onOpenVideo = { id -> viewModel.openVideo(VideoSource.Id(id)) },
                 // One download UI: the sheet owns permissions, progress and «Сохранено · Открыть».
-                onDownload = { id -> viewModel.openVideo(VideoSource.Id(id)) },
+                onDownload = { id -> viewModel.openVideo(VideoSource.Id(id), download = true) },
                 onSend = viewModel::openSend,
             )
             settingsGraph(
@@ -137,6 +137,8 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
             sheets.video?.let { source ->
                 VideoSheet(
                     source = source,
+                    downloadOnOpen = sheets.downloadOnOpen,
+                    onDownloadOnOpenConsumed = viewModel::consumeDownloadOnOpen,
                     onSend = viewModel::openSend,
                     onLinkTelegram = onLinkTelegram,
                     onDismiss = viewModel::closeSheets,
@@ -145,6 +147,7 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
             sheets.sendVideoId?.let { videoId ->
                 SendSheet(
                     videoId = videoId,
+                    retrySendId = sheets.sendRetryId,
                     onSent = viewModel::closeSend,
                     onLinkTelegram = onLinkTelegram,
                     onDismiss = viewModel::closeSend,

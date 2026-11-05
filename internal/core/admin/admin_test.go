@@ -210,3 +210,36 @@ func TestDailySummary(t *testing.T) {
 		t.Fatalf("messages = %q", got)
 	}
 }
+
+func TestCertExpiryAlert(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.link.connected = []string{"w-1", "w-2", "w-3"}
+	for i, id := range []string{"w-1", "w-2", "w-3"} {
+		if err := e.svc.AllowWorker(ctx, id, strings.Repeat(string("abc"[i]), 64)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setExpiry := func(id string, in time.Duration) {
+		t.Helper()
+		if _, err := e.st.DB().ExecContext(ctx, `UPDATE workers SET cert_not_after = ? WHERE id = ?`,
+			e.now.Add(in).UnixMilli(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setExpiry("w-1", 10*24*time.Hour+time.Hour) // soon: alert
+	setExpiry("w-2", 90*24*time.Hour)           // far: quiet
+	// w-3 has no recorded expiry: quiet.
+
+	_ = e.svc.Check(ctx)
+	_ = e.svc.Check(ctx) // deduplicated within a day
+	got := e.messages()
+	if len(got) != 1 || got[0] != "⚠️ Сертификат w-1 истекает через 10 дн." {
+		t.Fatalf("messages = %q", got)
+	}
+	e.now = e.now.Add(24*time.Hour + 10*time.Minute) // 09:40 MSK, past the dedup window
+	_ = e.svc.Check(ctx)
+	if got := e.messages(); len(got) != 2 || got[1] != "⚠️ Сертификат w-1 истекает через 9 дн." {
+		t.Fatalf("after a day: %q", got)
+	}
+}

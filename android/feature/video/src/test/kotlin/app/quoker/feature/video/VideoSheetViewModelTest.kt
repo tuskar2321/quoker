@@ -27,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -216,8 +217,10 @@ class VideoSheetViewModelTest {
         tracker.register(TrackedSend(8, "tiktok:1", 42, "Канал"))
         val error = QuokerError("target_inactive", "", false)
         sends.pollOf(8).emit(send(SendStatus.FAILED, error).copy(id = 8))
-        assertEquals(SendUi.Failed("Канал", error), vm.state.value.send)
+        assertEquals(SendUi.Failed("Канал", error, sendId = 8), vm.state.value.send)
         vm.eventFlow.test {
+            vm.onRetrySend(8)
+            assertEquals(VideoSheetEvent.OpenSend("tiktok:1", retrySendId = 8), awaitItem())
             vm.onSendAgain()
             assertEquals(VideoSheetEvent.OpenSend("tiktok:1"), awaitItem())
         }
@@ -231,4 +234,39 @@ class VideoSheetViewModelTest {
 
     private fun send(status: SendStatus, error: QuokerError? = null) =
         Send(7, "tiktok:1", 42, status, error, null, null)
+
+    @Test
+    fun downloadRequestedFromHistory() = runTest(dispatcher) {
+        data class Case(val name: String, val initial: DownloadState, val prompt: Boolean, val started: Int)
+        val cases = listOf(
+            Case("not saved: downloads at once", DownloadState.Idle, prompt = false, started = 1),
+            Case("failed before: downloads at once", DownloadState.Failed(QuokerError("network", "", true)), prompt = false, started = 1),
+            Case("saved: asks first", DownloadState.Saved("content://media/1"), prompt = true, started = 0),
+            Case("running: nothing new", DownloadState.Downloading(40), prompt = false, started = 0),
+        )
+        for (case in cases) {
+            val downloads = FakeVideoDownloads()
+            downloads.stateOf(video().id).value = case.initial
+            val vm = VideoSheetViewModel(VideoSource.Id(video().id), videos, auth, downloads, tracker, sends)
+            visible(vm)
+            vm.onDownloadRequested()
+            vm.onDownloadRequested() // Recomposition must not repeat the request.
+            assertEquals(case.name, case.prompt, vm.state.value.confirmRedownload)
+            assertEquals(case.name, case.started, downloads.started.size)
+        }
+    }
+
+    @Test
+    fun redownloadPromptAnswers() = runTest(dispatcher) {
+        for (confirm in listOf(true, false)) {
+            val downloads = FakeVideoDownloads()
+            downloads.stateOf(video().id).value = DownloadState.Saved("content://media/1")
+            val vm = VideoSheetViewModel(VideoSource.Id(video().id), videos, auth, downloads, tracker, sends)
+            visible(vm)
+            vm.onDownloadRequested()
+            if (confirm) vm.onConfirmRedownload() else vm.onDismissRedownload()
+            assertFalse("confirm=$confirm", vm.state.value.confirmRedownload)
+            assertEquals("confirm=$confirm", if (confirm) 1 else 0, downloads.started.size)
+        }
+    }
 }

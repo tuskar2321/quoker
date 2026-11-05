@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.last
@@ -67,6 +69,8 @@ class VideoSheetViewModel @AssistedInject constructor(
     private val downloadOverride = MutableStateFlow<DownloadState?>(null)
     private val checkingTelegram = MutableStateFlow(false)
     private val notificationsShown = MutableStateFlow(downloads.notificationsAllowed())
+    private val confirmRedownload = MutableStateFlow(false)
+    private var downloadRequested = false
     private var telegramLinked: Boolean? = null
     private var resolveJob: Job? = null
 
@@ -87,8 +91,14 @@ class VideoSheetViewModel @AssistedInject constructor(
         checkingTelegram,
     ) { send, checking -> if (checking && send !is SendUi.Sending) SendUi.Checking else send }
 
-    val state: StateFlow<VideoSheetUiState> = combine(content, download, send, notificationsShown) { c, d, s, n ->
-        VideoSheetUiState(content = c, download = d, send = s, notificationsShown = n)
+    val state: StateFlow<VideoSheetUiState> = combine(
+        content,
+        download,
+        send,
+        notificationsShown,
+        confirmRedownload,
+    ) { c, d, s, n, r ->
+        VideoSheetUiState(content = c, download = d, send = s, notificationsShown = n, confirmRedownload = r)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), VideoSheetUiState())
 
     init {
@@ -125,6 +135,32 @@ class VideoSheetViewModel @AssistedInject constructor(
         startDownload(video)
     }
 
+    /**
+     * «Скачать снова» opened the sheet: once the video is known, download it, or ask first when it
+     * is already saved (docs/01 С3). Repeated calls (recomposition, recreation) do nothing.
+     */
+    fun onDownloadRequested() {
+        if (downloadRequested) return
+        downloadRequested = true
+        viewModelScope.launch {
+            val video = content.filterIsInstance<VideoContent.Ready>().first().video
+            when (downloads.observe(video.id).first()) {
+                is DownloadState.Saved -> confirmRedownload.value = true
+                DownloadState.Preparing, is DownloadState.Downloading -> Unit // Already running.
+                DownloadState.Idle, is DownloadState.Failed -> onDownloadClick()
+            }
+        }
+    }
+
+    fun onConfirmRedownload() {
+        confirmRedownload.value = false
+        onDownloadClick()
+    }
+
+    fun onDismissRedownload() {
+        confirmRedownload.value = false
+    }
+
     fun onCancelDownload() {
         readyVideo()?.let { downloads.cancel(it.id) }
     }
@@ -147,9 +183,14 @@ class VideoSheetViewModel @AssistedInject constructor(
         }
     }
 
-    /** «Ещё» after a sent result and «Повторить» after a failed one: pick a target again. */
+    /** «Ещё» after a sent result: pick a target again. */
     fun onSendAgain() {
         readyVideo()?.let { events.trySend(VideoSheetEvent.OpenSend(it.id)) }
+    }
+
+    /** «Повторить» after a failed send: "Куда отправить" with the failed send's target preselected. */
+    fun onRetrySend(sendId: Long) {
+        readyVideo()?.let { events.trySend(VideoSheetEvent.OpenSend(it.id, retrySendId = sendId)) }
     }
 
     private fun startDownload(video: Video) {
@@ -175,7 +216,7 @@ class VideoSheetViewModel @AssistedInject constructor(
                 .map { s ->
                     when (s.status) {
                         SendStatus.SENT -> SendUi.Sent(tracked.targetTitle)
-                        SendStatus.FAILED -> SendUi.Failed(tracked.targetTitle, s.error)
+                        SendStatus.FAILED -> SendUi.Failed(tracked.targetTitle, s.error, tracked.sendId)
                         SendStatus.QUEUED, SendStatus.SENDING -> SendUi.Sending(tracked.targetTitle)
                     }
                 }

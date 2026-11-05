@@ -45,8 +45,25 @@ class AdminStatusViewModelTest {
         val cases = listOf(
             Case("healthy", AdminStatusUiState(status = adminStatus()), emptyList()),
             Case(
-                "no workers online",
-                AdminStatusUiState(status = adminStatus(workers = listOf(worker("w", connected = false)))),
+                "no worker ever seen",
+                AdminStatusUiState(status = adminStatus(workers = listOf(worker("w", connected = false))), now = now),
+                listOf(AdminAlert.NoWorkers),
+            ),
+            Case("no workers at all", AdminStatusUiState(status = adminStatus(workers = emptyList()), now = now), listOf(AdminAlert.NoWorkers)),
+            Case(
+                "offline for 2 minutes: not yet",
+                AdminStatusUiState(
+                    status = adminStatus(workers = listOf(worker("w", connected = false).copy(lastSeenAt = now.minusSeconds(120)))),
+                    now = now,
+                ),
+                emptyList(),
+            ),
+            Case(
+                "offline for 6 minutes",
+                AdminStatusUiState(
+                    status = adminStatus(workers = listOf(worker("w", connected = false).copy(lastSeenAt = now.minusSeconds(360)))),
+                    now = now,
+                ),
                 listOf(AdminAlert.NoWorkers),
             ),
             Case("instagram errors", AdminStatusUiState(status = adminStatus(instagramErrors = 3)), listOf(AdminAlert.InstagramErrors(3))),

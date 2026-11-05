@@ -250,6 +250,8 @@ data class WorkerDto(
     @SerialName("connected") val connected: Boolean = false,
     @SerialName("version") val version: String? = null,
     @SerialName("ytdlp_version") val ytdlpVersion: String? = null,
+    /** Absent on cores older than the field. */
+    @SerialName("cert_not_after") val certNotAfter: String? = null,
     @SerialName("last_seen_at") val lastSeenAt: String? = null,
     @SerialName("is_poller") val isPoller: Boolean = false,
 )

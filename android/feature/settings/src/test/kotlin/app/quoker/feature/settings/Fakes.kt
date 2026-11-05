@@ -147,6 +147,7 @@ fun worker(id: String, connected: Boolean = true, poller: Boolean = false, statu
     connected = connected,
     version = "1.0.0",
     ytdlpVersion = "2026.10.22",
+    certNotAfter = null,
     lastSeenAt = null,
     isPoller = poller,
 )

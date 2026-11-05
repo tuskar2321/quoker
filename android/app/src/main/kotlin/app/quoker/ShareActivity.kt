@@ -45,6 +45,7 @@ class ShareActivity : ComponentActivity() {
             QuokerTheme {
                 val signedIn by remember { auth.signedIn }.collectAsStateWithLifecycle(initialValue = null)
                 var sendVideoId by rememberSaveable { mutableStateOf<String?>(null) }
+                var sendRetryId by rememberSaveable { mutableStateOf<Long?>(null) }
                 when (signedIn) {
                     null -> Unit
                     false -> SignInFirstSheet(
@@ -55,13 +56,17 @@ class ShareActivity : ComponentActivity() {
                         val onLinkTelegram = { openMain(PendingDestination.TelegramLink) }
                         VideoSheet(
                             source = source,
-                            onSend = { sendVideoId = it },
+                            onSend = { videoId, retrySendId ->
+                                sendRetryId = retrySendId
+                                sendVideoId = videoId
+                            },
                             onLinkTelegram = onLinkTelegram,
                             onDismiss = ::finish,
                         )
                         sendVideoId?.let { videoId ->
                             SendSheet(
                                 videoId = videoId,
+                                retrySendId = sendRetryId,
                                 onSent = { sendVideoId = null },
                                 onLinkTelegram = onLinkTelegram,
                                 onDismiss = { sendVideoId = null },

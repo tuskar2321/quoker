@@ -125,6 +125,23 @@ class MainViewModelTest {
     }
 
     @Test
+    fun retrySendIdTravelsWithTheSendSheetOnly() = runTest {
+        val state = SavedStateHandle()
+        val first = viewModel(FakeAuthRepository(true), state)
+        first.openSend("v1", retrySendId = 7)
+        assertEquals(MainSheets(null, "v1", 7), first.sheets.value)
+
+        val second = viewModel(FakeAuthRepository(true), state)
+        assertEquals(MainSheets(null, "v1", 7), second.sheets.value)
+
+        second.openSend("v1")
+        assertEquals(MainSheets(null, "v1", null), second.sheets.value)
+        second.openSend("v2", retrySendId = 8)
+        second.closeSend()
+        assertEquals(MainSheets(), second.sheets.value)
+    }
+
+    @Test
     fun pendingDestinationIsConsumedOnce() = runTest {
         val vm = viewModel(FakeAuthRepository(true))
         vm.onDestination(null)

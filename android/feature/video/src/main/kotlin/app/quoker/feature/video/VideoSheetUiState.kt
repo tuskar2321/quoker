@@ -38,7 +38,8 @@ sealed interface SendUi {
 
     data class Sent(val targetTitle: String) : SendUi
 
-    data class Failed(val targetTitle: String, val error: QuokerError?) : SendUi
+    /** [sendId] lets «Повторить» reopen "Куда отправить" with the same target. */
+    data class Failed(val targetTitle: String, val error: QuokerError?, val sendId: Long) : SendUi
 }
 
 data class VideoSheetUiState(
@@ -47,10 +48,13 @@ data class VideoSheetUiState(
     val send: SendUi = SendUi.Idle,
     /** Notifications are allowed (or not needed): the hint mentions the notification. */
     val notificationsShown: Boolean = true,
+    /** «Уже скачано. Скачать ещё раз?» (docs/01 С3): a download was asked for a saved video. */
+    val confirmRedownload: Boolean = false,
 )
 
 sealed interface VideoSheetEvent {
-    data class OpenSend(val videoId: String) : VideoSheetEvent
+    /** [retrySendId]: «Повторить» of a failed send, its target is preselected. */
+    data class OpenSend(val videoId: String, val retrySendId: Long? = null) : VideoSheetEvent
 
     data object LinkTelegram : VideoSheetEvent
 

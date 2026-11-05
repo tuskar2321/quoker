@@ -42,7 +42,9 @@ import app.quoker.core.data.model.FileState
 import app.quoker.core.data.model.FileStatus
 import app.quoker.core.data.model.Platform
 import app.quoker.core.data.model.Video
+import app.quoker.core.designsystem.R as DesignR
 import app.quoker.core.designsystem.component.ButtonTone
+import app.quoker.core.designsystem.component.ConfirmDialog
 import app.quoker.core.designsystem.component.CoverSize
 import app.quoker.core.designsystem.component.DownloadProgressButton
 import app.quoker.core.designsystem.component.IconContainer
@@ -70,21 +72,23 @@ import app.quoker.core.download.DownloadState
 import app.quoker.core.download.VideoDownloads
 import app.quoker.core.download.downloadMessage
 import app.quoker.core.network.ErrorCodes
-import app.quoker.core.designsystem.R as DesignR
 
 /**
  * The "Видео" sheet (Video / Downloading / Error mockups), shared by MainActivity and ShareActivity.
- * [onSend] opens "Куда отправить" for the video; [onLinkTelegram] opens the Telegram binding when
+ * [onSend] opens "Куда отправить" for the video (with
+ * `retrySendId` for «Повторить» of a failed send: its target is preselected); [onLinkTelegram] opens the Telegram binding when
  * the account has none.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoSheet(
     source: VideoSource,
-    onSend: (videoId: String) -> Unit,
+    onSend: (videoId: String, retrySendId: Long?) -> Unit,
     onLinkTelegram: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    downloadOnOpen: Boolean = false,
+    onDownloadOnOpenConsumed: () -> Unit = {},
 ) {
     val viewModel = hiltViewModel<VideoSheetViewModel, VideoSheetViewModel.Factory>(
         key = source.key,
@@ -101,11 +105,28 @@ fun VideoSheet(
     LaunchedEffect(viewModel) {
         viewModel.eventFlow.collect { event ->
             when (event) {
-                is VideoSheetEvent.OpenSend -> currentOnSend(event.videoId)
+                is VideoSheetEvent.OpenSend -> currentOnSend(event.videoId, event.retrySendId)
                 VideoSheetEvent.LinkTelegram -> currentOnLinkTelegram()
                 is VideoSheetEvent.RequestPermissions -> permissions.launch(event.permissions.toTypedArray())
             }
         }
+    }
+
+    LaunchedEffect(viewModel, downloadOnOpen) {
+        if (downloadOnOpen) {
+            viewModel.onDownloadRequested()
+            onDownloadOnOpenConsumed()
+        }
+    }
+
+    if (state.confirmRedownload) {
+        ConfirmDialog(
+            title = stringResource(R.string.video_redownload_title),
+            text = null,
+            confirmText = stringResource(R.string.video_redownload_confirm),
+            onConfirm = viewModel::onConfirmRedownload,
+            onDismiss = viewModel::onDismissRedownload,
+        )
     }
 
     QuokerBottomSheet(
@@ -121,6 +142,7 @@ fun VideoSheet(
                 onOpenSaved = { uri -> context.openOrToast(VideoDownloads.openSavedVideoIntent(uri)) },
                 onSend = viewModel::onSendClick,
                 onSendAgain = viewModel::onSendAgain,
+                onRetrySend = viewModel::onRetrySend,
                 onOpenOriginal = { url ->
                     context.openOrToast(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 },
@@ -137,6 +159,7 @@ internal data class VideoSheetActions(
     val onOpenSaved: (uri: String) -> Unit = {},
     val onSend: () -> Unit = {},
     val onSendAgain: () -> Unit = {},
+    val onRetrySend: (sendId: Long) -> Unit = {},
     val onOpenOriginal: (url: String) -> Unit = {},
     val onRetry: () -> Unit = {},
     val onClose: () -> Unit = {},
@@ -318,7 +341,7 @@ private fun SendControl(send: SendUi, actions: VideoSheetActions) {
             text = stringResource(R.string.video_send_failed),
             tone = StatusTone.Error,
             icon = QuokerIcons.Error,
-            trailing = { StatusButtonAction(stringResource(DesignR.string.action_retry), StatusTone.Error, actions.onSendAgain) },
+            trailing = { StatusButtonAction(stringResource(DesignR.string.action_retry), StatusTone.Error, onClick = { actions.onRetrySend(send.sendId) }) },
         )
     }
 }
@@ -445,7 +468,7 @@ private fun SavedPreview() =
 private fun FailedPreview() = PreviewSheet(
     ready.copy(
         download = DownloadState.Failed(QuokerError(ErrorCodes.NETWORK, "", true)),
-        send = SendUi.Failed("Друзья", null),
+        send = SendUi.Failed("Друзья", null, sendId = 1),
     ),
 )
 

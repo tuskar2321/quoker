@@ -18,7 +18,14 @@ class HistoryCardsTest {
 
     @Test
     fun `card badges and buttons`() {
-        data class Case(val name: String, val item: app.quoker.core.data.model.HistoryItem, val downloaded: Boolean, val sentTo: List<String>, val failed: Boolean)
+        data class Case(
+            val name: String,
+            val item: app.quoker.core.data.model.HistoryItem,
+            val downloaded: Boolean,
+            val sentTo: List<String>,
+            val failed: Boolean,
+            val retrySendId: Long? = null,
+        )
         val cases = listOf(
             Case("resolved only", item(1, action(RESOLVED, t)), false, emptyList(), false),
             Case(
@@ -26,16 +33,26 @@ class HistoryCardsTest {
                 item(2, action(SENT, t, "Друзья"), action(DOWNLOADED, t)),
                 true, listOf("Друзья"), false,
             ),
-            Case("failed", item(3, action(SEND_FAILED, t, "Друзья")), false, emptyList(), true),
+            Case("failed", item(3, action(SEND_FAILED, t, "Друзья", sendId = 30)), false, emptyList(), true, 30),
             Case(
                 "failed then sent to the same target",
-                item(4, action(SENT, t, "Друзья"), action(SEND_FAILED, t, "Друзья")),
+                item(4, action(SENT, t, "Друзья", sendId = 41), action(SEND_FAILED, t, "Друзья", sendId = 40)),
                 false, listOf("Друзья"), false,
             ),
             Case(
                 "sent to one, failed to another",
-                item(5, action(SEND_FAILED, t, "Канал"), action(SENT, t, "Друзья"), action(SENT, t, "Друзья")),
-                false, listOf("Друзья"), true,
+                item(5, action(SEND_FAILED, t, "Канал", sendId = 52), action(SENT, t, "Друзья"), action(SENT, t, "Друзья")),
+                false, listOf("Друзья"), true, 52,
+            ),
+            Case(
+                "sent to one after it failed, older failure to another is retried",
+                item(
+                    6,
+                    action(SENT, t, "Друзья", sendId = 63),
+                    action(SEND_FAILED, t, "Друзья", sendId = 62),
+                    action(SEND_FAILED, t, "Канал", sendId = 61),
+                ),
+                false, listOf("Друзья"), true, 61,
             ),
         )
         for (c in cases) {
@@ -43,6 +60,7 @@ class HistoryCardsTest {
             assertEquals(c.name, c.downloaded, card.downloaded)
             assertEquals(c.name, c.sentTo, card.sentTo)
             assertEquals(c.name, c.failed, card.sendFailed)
+            assertEquals(c.name, c.retrySendId, card.retrySendId)
         }
     }
 

@@ -39,7 +39,7 @@ object Samples {
 
     const val APP_VERSION = """{"version_code":12,"version_name":"1.2.0","apk_url":"https://api.example.ru/download/quoker-1.2.0.apk","sha256":"ab12","min_supported_version_code":10,"changelog":"Новое"}"""
 
-    const val WORKER = """{"id":"ru-1","fingerprint":"deadbeef","status":"allowed","connected":true,"version":"1.0.0","ytdlp_version":"2026.10.01","last_seen_at":"2026-11-03T11:59:59Z","is_poller":true}"""
+    const val WORKER = """{"id":"ru-1","fingerprint":"deadbeef","status":"allowed","connected":true,"version":"1.0.0","ytdlp_version":"2026.10.01","cert_not_after":"2027-11-12T00:00:00Z","last_seen_at":"2026-11-03T11:59:59Z","is_poller":true}"""
     const val WORKER_OFFLINE = """{"id":"nl-1","fingerprint":"cafe","status":"revoked","connected":false,"version":null,"ytdlp_version":null,"last_seen_at":null,"is_poller":false}"""
     const val ADMIN_STATUS = """{"workers":[$WORKER,$WORKER_OFFLINE],"queue":{"queued":3,"running":1},"errors_24h":{"instagram":2,"telegram":0,"tiktok":1},"disk":{"used_bytes":1000,"total_bytes":4000,"cache_bytes":500},"versions":{"app_latest":"","core":"v1.0.0"}}"""
     const val WORKERS = """{"items":[$WORKER]}"""

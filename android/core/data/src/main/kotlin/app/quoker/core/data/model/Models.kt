@@ -197,9 +197,13 @@ data class Worker(
     val connected: Boolean,
     val version: String?,
     val ytdlpVersion: String?,
+    /** Expiry of the worker's client certificate; null when the core does not know it. */
+    val certNotAfter: Instant?,
     val lastSeenAt: Instant?,
     val isPoller: Boolean,
-)
+) {
+    val isOnline: Boolean get() = connected && status == WorkerStatus.ALLOWED
+}
 
 data class AdminStatus(
     val workers: List<Worker>,

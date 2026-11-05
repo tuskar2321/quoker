@@ -193,6 +193,8 @@
     <string name="workers_revoked">Отозван</string>
     <string name="workers_versions">Воркер %1$s · yt-dlp %2$s</string>
     <string name="workers_version_unknown">—</string>
+    <string name="workers_cert_until">Сертификат до %1$s</string>
+    <string name="workers_cert_expired">Сертификат истёк %1$s</string>
     <string name="workers_revoke">Отозвать</string>
     <string name="workers_revoke_title">Отозвать %1$s?</string>
     <string name="workers_revoke_text">Соединение воркера сразу разорвётся, подключиться снова он не сможет.</string>

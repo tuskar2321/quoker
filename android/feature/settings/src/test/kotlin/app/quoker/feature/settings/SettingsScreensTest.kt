@@ -10,6 +10,7 @@ import app.quoker.core.data.model.InactiveReason
 import app.quoker.core.data.model.Role
 import app.quoker.core.data.model.TargetType
 import app.quoker.core.data.model.UserStatus
+import app.quoker.core.data.model.WorkerStatus
 import app.quoker.core.designsystem.theme.QuokerTheme
 import app.quoker.feature.settings.admin.AdminStatusActions
 import app.quoker.feature.settings.admin.AdminStatusContent
@@ -20,6 +21,8 @@ import app.quoker.feature.settings.admin.InvitesUiState
 import app.quoker.feature.settings.admin.NewInvite
 import app.quoker.feature.settings.admin.UsersContent
 import app.quoker.feature.settings.admin.UsersUiState
+import app.quoker.feature.settings.admin.WorkersContent
+import app.quoker.feature.settings.admin.WorkersUiState
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -133,5 +136,30 @@ class SettingsScreensTest {
         compose.onNodeWithText("3 человека · 2 активны · 1 заблокирован").assertExists()
         assertEquals(1, compose.onAllNodesWithText("Заблокировать").fetchSemanticsNodes().size)
         compose.onNodeWithText("Разблокировать").assertExists()
+    }
+
+    @Test
+    fun workersShowCertificateExpiry() {
+        val day = 86_400L
+        compose.setContent {
+            QuokerTheme {
+                WorkersContent(
+                    WorkersUiState(
+                        workers = listOf(
+                            worker("w-valid").copy(certNotAfter = Instant.parse("2027-11-12T10:00:00Z")),
+                            worker("w-soon").copy(certNotAfter = now.plusSeconds(day * 10)),
+                            worker("w-expired", connected = false).copy(certNotAfter = now.minusSeconds(day * 2)),
+                            worker("w-unknown"),
+                            worker("w-revoked", status = WorkerStatus.REVOKED).copy(certNotAfter = now.plusSeconds(day * 100)),
+                        ),
+                        now = now,
+                    ),
+                )
+            }
+        }
+        compose.onNodeWithText("Сертификат до 12 ноября 2027").assertExists()
+        compose.onNodeWithText("Сертификат до 15 ноября").assertExists()
+        compose.onNodeWithText("Сертификат истёк 3 ноября").assertExists()
+        assertEquals(3, compose.onAllNodesWithText("Сертификат", substring = true).fetchSemanticsNodes().size)
     }
 }

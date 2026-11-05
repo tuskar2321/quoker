@@ -63,9 +63,11 @@ class VideoSheetContentTest {
 
     @Test
     fun sendFailedShowsRetry() {
-        show(ready.copy(send = SendUi.Failed("Друзья", null)))
+        var retried: Long? = null
+        show(ready.copy(send = SendUi.Failed("Друзья", null, sendId = 9)), VideoSheetActions(onRetrySend = { retried = it }))
         compose.onNodeWithText("Не отправлено").assertExists()
-        compose.onNodeWithText("Повторить").assertExists()
+        compose.onNodeWithText("Повторить").performClick()
+        assertEquals(9L, retried)
     }
 
     @Test

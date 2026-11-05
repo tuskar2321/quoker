@@ -14,14 +14,14 @@ fun NavController.navigateToHistory(navOptions: NavOptions? = null) = navigate(H
 
 /**
  * The «История» screen. [onDownload] and [onSend] get the video id («Скачать снова»,
- * «Отправить», and «Повторить» for a failed send — the user picks the target again);
- * [onOpenVideo] opens the video sheet.
+ * «Отправить»); for «Повторить» of a failed send [onSend] also gets the send id, whose target
+ * "Куда отправить" preselects (docs/03: GET /v1/sends/{id}). [onOpenVideo] opens the video sheet.
  */
 fun NavGraphBuilder.historyScreen(
     onBack: () -> Unit,
     onOpenVideo: (videoId: String) -> Unit,
     onDownload: (videoId: String) -> Unit,
-    onSend: (videoId: String) -> Unit,
+    onSend: (videoId: String, retrySendId: Long?) -> Unit,
 ) {
     composable<HistoryRoute> {
         HistoryScreen(onBack = onBack, onOpenVideo = onOpenVideo, onDownload = onDownload, onSend = onSend)

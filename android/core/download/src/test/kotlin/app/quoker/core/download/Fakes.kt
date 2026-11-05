@@ -11,13 +11,17 @@ import app.quoker.core.data.model.TaskKind
 import app.quoker.core.data.model.TaskStatus
 import app.quoker.core.data.model.Video
 import app.quoker.core.data.repository.VideoRepository
+import app.quoker.core.download.internal.SavedVideos
 import app.quoker.core.download.internal.VideoSaver
 import app.quoker.core.network.QuokerException
 import java.io.File
 import java.io.IOException
 import kotlin.time.Duration
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
 class FakeVideoRepository(private val fileUrl: String) : VideoRepository {
     /** Results of successive prepare() calls; the last one repeats. */
@@ -72,3 +76,22 @@ fun sampleVideo(id: String = "tiktok:1") = Video(
     durationSeconds = 27, sizeBytes = 10, width = null, height = null, noWatermark = true,
     thumbnailUrl = null, file = FileState(FileStatus.NONE, null),
 )
+
+class FakeSavedVideos : SavedVideos {
+    val uris = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** Uris still present in the gallery. */
+    val existing = mutableSetOf<String>()
+    var existsCalls = 0
+
+    override suspend fun record(videoId: String, uri: String) {
+        uris.value += videoId to uri
+        existing += uri
+    }
+
+    override fun observe(videoId: String): Flow<String?> = uris.map { it[videoId] }.distinctUntilChanged()
+
+    override suspend fun exists(uri: String): Boolean {
+        existsCalls++
+        return uri in existing
+    }
+}

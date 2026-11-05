@@ -99,8 +99,8 @@ class FakeAuthRepository(var role: Role = Role.USER) : AuthRepository {
     override suspend fun unlinkTelegram() = Unit
 }
 
-fun worker(connected: Boolean, status: WorkerStatus = WorkerStatus.ALLOWED) =
-    Worker("w1", "ab", status, connected, null, null, null, isPoller = connected)
+fun worker(connected: Boolean, status: WorkerStatus = WorkerStatus.ALLOWED, lastSeenAt: java.time.Instant? = null) =
+    Worker("w1", "ab", status, connected, null, null, certNotAfter = null, lastSeenAt = lastSeenAt, isPoller = connected)
 
 class FakeAdminRepository : AdminRepository {
     var workers: List<Worker> = emptyList()

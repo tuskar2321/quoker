@@ -61,7 +61,8 @@ import java.util.UUID
 import app.quoker.core.designsystem.R as DsR
 
 /**
- * The "Куда отправить" sheet for [videoId]. [onSent] fires after the core accepted the send (it is
+ * The "Куда отправить" sheet for [videoId]. [retrySendId] is set by «Повторить»: the failed send's
+ * target is preselected. [onSent] fires after the core accepted the send (it is
  * registered in SendTracker, the video sheet shows its progress); [onLinkTelegram] when the user
  * has no linked Telegram; [onDismiss] on back or swipe.
  */
@@ -69,15 +70,16 @@ import app.quoker.core.designsystem.R as DsR
 @Composable
 fun SendSheet(
     videoId: String,
+    retrySendId: Long? = null,
     onSent: () -> Unit,
     onLinkTelegram: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val viewModel: SendViewModel = hiltViewModel(key = "send:$videoId")
     // A new id per opening of the sheet; it survives recreation so the Idempotency-Key does too.
-    val sessionId = rememberSaveable(videoId) { UUID.randomUUID().toString() }
+    val sessionId = rememberSaveable(videoId, retrySendId) { UUID.randomUUID().toString() }
     DisposableEffect(viewModel, videoId, sessionId) {
-        viewModel.open(videoId, sessionId)
+        viewModel.open(videoId, sessionId, retrySendId)
         onDispose { viewModel.close() }
     }
     val sent by rememberUpdatedState(onSent)

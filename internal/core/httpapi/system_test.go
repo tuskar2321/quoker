@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
 	"github.com/tuskar2321/quoker/internal/core/queue"
@@ -37,6 +38,16 @@ func TestAdminSystemEndpoints(t *testing.T) {
 	}
 	list := e.do(req{method: http.MethodGet, path: "/v1/admin/workers", token: adminTok})
 	items, _ := list.body["items"].([]any)
+	if len(items) == 1 && items[0].(map[string]any)["cert_not_after"] != nil {
+		t.Fatalf("cert_not_after must be null before the first connect: %s", list.raw)
+	}
+	if _, err := e.st.DB().ExecContext(context.Background(),
+		`UPDATE workers SET cert_not_after = ? WHERE id = 'w-1'`, time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.do(req{method: http.MethodGet, path: "/v1/admin/workers", token: adminTok}); !strings.Contains(got.raw, `"cert_not_after":"2027-01-02T03:04:05Z"`) {
+		t.Fatalf("cert_not_after missing: %s", got.raw)
+	}
 	if len(items) != 1 || items[0].(map[string]any)["connected"] != false || items[0].(map[string]any)["version"] != nil {
 		t.Fatalf("workers = %s", list.raw)
 	}

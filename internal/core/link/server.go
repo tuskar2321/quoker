@@ -4,11 +4,16 @@ package link
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +61,10 @@ const (
 	headerFingerprint = "X-Client-Cert-Fingerprint"
 	// headerCertCN is set by Caddy to the certificate's Common Name.
 	headerCertCN = "X-Client-Cert-CN"
+	// headerCertDER carries the client certificate, DER in standard base64
+	// ({http.request.tls.client.certificate_der_base64}). Optional: it is
+	// only used to learn the certificate expiry date.
+	headerCertDER = "X-Client-Cert-DER"
 )
 
 // ResultHandler applies task outcomes to domain state.
@@ -251,6 +260,7 @@ func (s *Server) Connect(stream linkv1.LinkService_ConnectServer) error {
 		}
 	}()
 	s.updateWorkerSeen(stream.Context(), workerID, hello)
+	s.updateCertExpiry(stream.Context(), workerID, fingerprint, log)
 	s.claimPollerIfFree(stream.Context(), workerID)
 
 	cfg, err := s.loadConfig(stream.Context(), workerID)
@@ -854,6 +864,41 @@ func (s *Server) updateWorkerSeen(ctx context.Context, workerID string, hello *l
 		hello.Version, hello.YtdlpVersion, s.now().UnixMilli(), workerID)
 	if err != nil {
 		s.log.Warn("update worker seen", "worker", workerID, "err", err)
+	}
+}
+
+// updateCertExpiry stores the NotAfter of the worker's client certificate
+// when the proxy passed the certificate. A missing or broken header is not
+// fatal: the worker stays connected, the expiry alert just has no data. The
+// certificate must be the one the worker was authorized by (its SHA-256 equals
+// the fingerprint header), so an expiry is never taken from another certificate.
+func (s *Server) updateCertExpiry(ctx context.Context, workerID, fingerprint string, log *slog.Logger) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return
+	}
+	vals := md.Get(headerCertDER)
+	if len(vals) == 0 || vals[0] == "" {
+		return
+	}
+	der, err := base64.StdEncoding.DecodeString(vals[0])
+	if err != nil {
+		log.Warn("client certificate header is not base64", "err", err)
+		return
+	}
+	sum := sha256.Sum256(der)
+	if hex.EncodeToString(sum[:]) != strings.ToLower(strings.ReplaceAll(fingerprint, ":", "")) {
+		log.Warn("client certificate header does not match the fingerprint")
+		return
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		log.Warn("client certificate header is not a certificate", "err", err)
+		return
+	}
+	if _, err := s.st.DB().ExecContext(ctx,
+		`UPDATE workers SET cert_not_after = ? WHERE id = ?`, cert.NotAfter.UnixMilli(), workerID); err != nil {
+		log.Warn("update cert_not_after", "err", err)
 	}
 }
 

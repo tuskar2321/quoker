@@ -28,7 +28,9 @@ class HomeViewModelTest {
     private val auth = FakeAuthRepository()
     private val admin = FakeAdminRepository()
     private val network = FakeNetworkMonitor()
-    private val vm by lazy { HomeViewModel(history, auth, admin, network) }
+    private val now = java.time.Instant.parse("2026-11-05T12:00:00Z")
+    private val clock = app.quoker.core.common.Clock { now }
+    private val vm by lazy { HomeViewModel(history, auth, admin, network, clock) }
 
     private fun test(body: suspend TestScope.() -> Unit) = runTest(main.dispatcher) {
         backgroundScope.launch { vm.state.collect {} }
@@ -132,12 +134,14 @@ class HomeViewModelTest {
             Triple(Role.ADMIN, listOf(worker(connected = false)), true),
             Triple(Role.ADMIN, listOf(worker(connected = true, status = WorkerStatus.REVOKED)), true),
             Triple(Role.ADMIN, listOf(worker(connected = false), worker(connected = true)), false),
+            Triple(Role.ADMIN, listOf(worker(connected = false, lastSeenAt = now.minusSeconds(120))), false),
+            Triple(Role.ADMIN, listOf(worker(connected = false, lastSeenAt = now.minusSeconds(301))), true),
             Triple(Role.USER, emptyList(), false),
         )
         for ((role, workers, expected) in cases) {
             val auth = FakeAuthRepository(role)
             val admin = FakeAdminRepository().also { it.workers = workers }
-            val vm = HomeViewModel(history, auth, admin, network)
+            val vm = HomeViewModel(history, auth, admin, network, clock)
             backgroundScope.launch { vm.state.collect {} }
             vm.onStart()
             runCurrent()

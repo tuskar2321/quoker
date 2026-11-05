@@ -233,4 +233,64 @@ class SendViewModelTest {
             assertEquals("", vm.state.value.captionFieldValue)
             assertNull(vm.state.value.captionToSend)
         }
+
+    private data class RetryCase(
+        val name: String,
+        val server: List<app.quoker.core.data.model.Target>,
+        val existing: Map<Long, Long>,
+        val retrySendId: Long?,
+        val expected: Long?,
+    )
+
+    @Test
+    fun `retry preselects the failed send's target when it is still active`() = runTest(main.dispatcher) {
+        val cases = listOf(
+            RetryCase("retry to a not-last-used target", listOf(channel, friends), mapOf(7L to 43L), 7L, 43L),
+            RetryCase("no retry keeps the last used", listOf(channel, friends), mapOf(7L to 43L), null, 42L),
+            RetryCase("unknown send falls back", listOf(channel, friends), emptyMap(), 7L, 42L),
+            RetryCase("inactive target falls back", listOf(channel, friends, old), mapOf(7L to 45L), 7L, 42L),
+            RetryCase("hidden target falls back", listOf(channel, friends, hidden), mapOf(7L to 46L), 7L, 42L),
+        )
+        for (case in cases) {
+            targets.server = case.server
+            sends.existing.clear()
+            sends.existing.putAll(case.existing)
+            val vm = viewModel()
+            vm.open("v", "s-${case.name}", case.retrySendId)
+            advanceUntilIdle()
+            assertEquals(case.name, case.expected, vm.state.value.selectedId)
+        }
+    }
+
+    @Test
+    fun `a target picked by the user wins over a late retry target`() = runTest(main.dispatcher) {
+        targets.cache.value = listOf(channel, friends)
+        targets.server = listOf(channel, friends)
+        sends.existing[7L] = 43L
+        sends.getGate = kotlinx.coroutines.CompletableDeferred()
+        val vm = viewModel()
+        vm.open("v", "s1", retrySendId = 7L)
+        advanceUntilIdle()
+        assertEquals(42L, vm.state.value.selectedId)
+
+        vm.select(42)
+        sends.getGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(42L, vm.state.value.selectedId)
+    }
+
+    @Test
+    fun `a new session without retry drops the previous retry target`() = runTest(main.dispatcher) {
+        targets.server = listOf(channel, friends)
+        sends.existing[7L] = 43L
+        val vm = viewModel()
+        vm.open("v", "s1", retrySendId = 7L)
+        advanceUntilIdle()
+        assertEquals(43L, vm.state.value.selectedId)
+
+        vm.close()
+        vm.open("v", "s2")
+        advanceUntilIdle()
+        assertEquals(42L, vm.state.value.selectedId)
+    }
 }

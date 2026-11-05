@@ -27,4 +27,6 @@
     <string name="video_error_private_tiktok">Видео приватное или удалено. Проверьте, открывается ли оно в TikTok без входа в аккаунт.</string>
     <string name="video_error_private_instagram">Видео приватное или удалено. Проверьте, открывается ли оно в Instagram без входа в аккаунт.</string>
     <string name="video_error_rate_limited">Слишком много запросов, попробуйте через час</string>
+    <string name="video_redownload_title">Уже скачано. Скачать ещё раз?</string>
+    <string name="video_redownload_confirm">Скачать</string>
 </resources>

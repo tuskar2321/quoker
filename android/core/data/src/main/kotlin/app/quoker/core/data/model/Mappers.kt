@@ -128,6 +128,7 @@ internal fun WorkerDto.toDomain() = Worker(
     connected = connected,
     version = version,
     ytdlpVersion = ytdlpVersion,
+    certNotAfter = certNotAfter.toInstantOrNull(),
     lastSeenAt = lastSeenAt.toInstantOrNull(),
     isPoller = isPoller,
 )

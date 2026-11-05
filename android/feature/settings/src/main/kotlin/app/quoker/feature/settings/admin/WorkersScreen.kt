@@ -43,6 +43,7 @@ import app.quoker.feature.settings.ui.EntityCard
 import app.quoker.feature.settings.ui.LoadError
 import app.quoker.feature.settings.ui.Note
 import app.quoker.feature.settings.ui.SettingsScaffold
+import app.quoker.feature.settings.ui.dateText
 import app.quoker.feature.settings.ui.lastSeenText
 import app.quoker.feature.settings.ui.resources
 import java.time.Instant
@@ -140,6 +141,16 @@ private fun WorkerCard(worker: Worker, revoking: Boolean, now: Instant, onRevoke
                 CardSubtitle(presence.joinToString(" · "))
             }
             CardSubtitle(stringResource(R.string.workers_versions, worker.version ?: unknown, worker.ytdlpVersion ?: unknown))
+            if (!revoked) {
+                worker.certNotAfter?.let { notAfter ->
+                    val date = dateText(notAfter, now)
+                    when (certExpiry(notAfter, now)) {
+                        CertExpiry.Valid -> CardSubtitle(stringResource(R.string.workers_cert_until, date))
+                        CertExpiry.ExpiresSoon -> CardSubtitle(stringResource(R.string.workers_cert_until, date), error = true)
+                        CertExpiry.Expired -> CardSubtitle(stringResource(R.string.workers_cert_expired, date), error = true)
+                    }
+                }
+            }
         },
         trailing = if (revoked) {
             null
@@ -241,7 +252,7 @@ private fun WorkersPreview() {
             WorkersUiState(
                 workers = listOf(
                     previewWorker("worker-1", poller = true),
-                    previewWorker("worker-2", connected = false),
+                    previewWorker("worker-2", connected = false).copy(certNotAfter = previewNow.plusSeconds(86_400L * 12)),
                     previewWorker("worker-old", connected = false, revoked = true),
                 ),
                 revokingId = "worker-2",

@@ -4,6 +4,7 @@ import app.quoker.core.common.QuokerError
 import app.quoker.core.data.model.PrepareResult
 import app.quoker.core.data.model.TaskStatus
 import app.quoker.core.download.DownloadErrors
+import app.quoker.core.download.FakeSavedVideos
 import app.quoker.core.download.FakeVideoRepository
 import app.quoker.core.download.FakeVideoSaver
 import app.quoker.core.download.task
@@ -31,7 +32,9 @@ class DownloadPipelineTest {
     private val dir: File = Files.createTempDirectory("pipeline").toFile()
     private val repo = FakeVideoRepository(server.url("/v1/videos/tiktok:1/file").toString())
     private val saver = FakeVideoSaver()
-    private val pipeline = DownloadPipeline(repo, RangeFileFetcher(OkHttpClient(), QuokerJson, Dispatchers.IO), saver, dir)
+    private val savedVideos = FakeSavedVideos()
+    private val pipeline =
+        DownloadPipeline(repo, RangeFileFetcher(OkHttpClient(), QuokerJson, Dispatchers.IO), saver, savedVideos, dir)
     private val content = ByteArray(300) { it.toByte() }
 
     @After
@@ -51,6 +54,7 @@ class DownloadPipelineTest {
         assertArrayEquals(content, saver.saved.single().first)
         assertEquals("quoker_tiktok_1.mp4", saver.saved.single().second)
         assertEquals(1, repo.markCalls)
+        assertEquals(mapOf("tiktok:1" to "content://media/external/video/media/1"), savedVideos.uris.value)
         assertEquals(DownloadProgress.Preparing, progress.first())
         assertEquals(DownloadProgress.Downloading(100), progress.last())
         assertTrue(dir.listFiles().orEmpty().isEmpty())
@@ -110,6 +114,7 @@ class DownloadPipelineTest {
         val outcome = pipeline.run("tiktok:1") {}
         assertEquals(DownloadErrors.STORAGE, (outcome as DownloadOutcome.Failed).error.code)
         assertEquals(0, repo.markCalls)
+        assertTrue(savedVideos.uris.value.isEmpty())
     }
 
     @Test

@@ -145,11 +145,11 @@ internal fun EntityCard(
 }
 
 @Composable
-internal fun CardSubtitle(text: String) {
+internal fun CardSubtitle(text: String, error: Boolean = false) {
     Text(
         text,
         style = QuokerTheme.typography.labelSmall.copy(fontWeight = FontWeight.W500),
-        color = QuokerTheme.colors.onSurfaceVariant,
+        color = if (error) QuokerTheme.colors.error else QuokerTheme.colors.onSurfaceVariant,
     )
 }
 

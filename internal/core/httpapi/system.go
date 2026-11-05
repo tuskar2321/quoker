@@ -57,6 +57,7 @@ type workerDTO struct {
 	Connected    bool    `json:"connected"`
 	Version      *string `json:"version"`
 	YtdlpVersion *string `json:"ytdlp_version"`
+	CertNotAfter *string `json:"cert_not_after"`
 	LastSeenAt   *string `json:"last_seen_at"`
 	IsPoller     bool    `json:"is_poller"`
 }
@@ -67,7 +68,7 @@ func toWorkerDTOs(ws []admin.Worker) []workerDTO {
 		out[i] = workerDTO{
 			ID: w.ID, Fingerprint: w.Fingerprint, Status: w.Status, Connected: w.Connected,
 			Version: strDTO(w.Version), YtdlpVersion: strDTO(w.YtdlpVersion),
-			LastSeenAt: timeDTO(w.LastSeenAt), IsPoller: w.IsPoller,
+			CertNotAfter: timeDTO(w.CertNotAfter), LastSeenAt: timeDTO(w.LastSeenAt), IsPoller: w.IsPoller,
 		}
 	}
 	return out

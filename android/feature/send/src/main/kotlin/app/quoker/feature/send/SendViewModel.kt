@@ -28,6 +28,8 @@ import kotlinx.coroutines.launch
 /**
  * State of the "Куда отправить" sheet. One instance per video; every opening of the sheet is a
  * session ([open]) with its own Idempotency-Key, reused for every press of «Отправить».
+ * «Повторить» opens a session with the failed send's id: its target (GET /v1/sends/{id},
+ * docs/03) is preselected unless the user already picked another one or it is inactive now.
  */
 @HiltViewModel
 class SendViewModel @Inject constructor(
@@ -47,6 +49,9 @@ class SendViewModel @Inject constructor(
     private var idempotencyKey: String = ""
     private var sessionJob: Job? = null
     private var refreshJob: Job? = null
+    /** Target of the failed send being retried; wins over the default selection. */
+    private var preferredTargetId: Long? = null
+    private var userSelected = false
 
     /** Visible for tests. */
     internal val currentIdempotencyKey: String get() = idempotencyKey
@@ -55,13 +60,15 @@ class SendViewModel @Inject constructor(
      * Starts a session for [sessionId] (a new opening of the sheet) or resumes it (same id, e.g.
      * after the composition was recreated): only a new session resets the form and the key.
      */
-    fun open(videoId: String, sessionId: String) {
+    fun open(videoId: String, sessionId: String, retrySendId: Long? = null) {
         val resume = sessionId == _state.value.sessionId && videoId == this.videoId
         if (resume && sessionJob?.isActive == true) return
         if (!resume) {
             this.videoId = videoId
             idempotencyKey = sends.newIdempotencyKey()
             refreshJob?.cancel()
+            preferredTargetId = null
+            userSelected = false
             _state.value = SendUiState(sessionId = sessionId)
         }
         sessionJob?.cancel()
@@ -70,6 +77,7 @@ class SendViewModel @Inject constructor(
             launch { fetch() }
             if (_state.value.signName == null) launch { loadSignName() }
             if (!resume) launch { loadDefaultCaption(videoId) }
+            if (!resume && retrySendId != null) launch { loadRetryTarget(retrySendId) }
         }
     }
 
@@ -80,9 +88,9 @@ class SendViewModel @Inject constructor(
     }
 
     fun select(targetId: Long) {
-        _state.update { s ->
-            if (s.targets.any { it.id == targetId && it.enabled }) s.copy(selectedId = targetId, sendError = null) else s
-        }
+        if (_state.value.targets.none { it.id == targetId && it.enabled }) return
+        userSelected = true
+        _state.update { it.copy(selectedId = targetId, sendError = null) }
     }
 
     fun onCaptionChange(text: String) {
@@ -168,9 +176,24 @@ class SendViewModel @Inject constructor(
     private fun onTargets(list: List<Target>) {
         _state.update { s ->
             val items = orderTargets(list)
-            val keep = s.selectedId?.takeIf { id -> items.any { it.id == id && it.enabled } }
-            s.copy(targets = items, selectedId = keep ?: defaultSelection(items))
+            s.copy(targets = items, selectedId = chooseSelection(items, s.selectedId))
         }
+    }
+
+    private fun chooseSelection(items: List<TargetItem>, current: Long?): Long? {
+        fun enabled(id: Long?) = id?.takeIf { i -> items.any { it.id == i && it.enabled } }
+        val preferred = if (userSelected) null else enabled(preferredTargetId)
+        return preferred ?: enabled(current) ?: defaultSelection(items)
+    }
+
+    private suspend fun loadRetryTarget(sendId: Long) {
+        val targetId = try {
+            sends.get(sendId).targetId
+        } catch (_: QuokerException) {
+            return // The default selection stays; the user can still pick the target by hand.
+        }
+        preferredTargetId = targetId
+        _state.update { it.copy(selectedId = chooseSelection(it.targets, it.selectedId)) }
     }
 
     private suspend fun loadSignName() {

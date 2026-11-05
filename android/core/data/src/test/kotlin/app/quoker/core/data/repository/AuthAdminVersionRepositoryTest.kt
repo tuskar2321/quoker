@@ -85,10 +85,11 @@ class AuthAdminVersionRepositoryTest {
         val admin = AdminRepositoryImpl(t.api)
         t.enqueue(
             200,
-            """{"workers":[{"id":"ru-1","fingerprint":"ab","status":"allowed","connected":true,"version":"1","ytdlp_version":null,"last_seen_at":"2026-11-03T11:00:00Z","is_poller":true}],"queue":{"queued":3,"running":1},"errors_24h":{"tiktok":1,"instagram":2,"telegram":0},"disk":{"used_bytes":900,"total_bytes":1000,"cache_bytes":5},"versions":{"core":"v1","app_latest":""}}""",
+            """{"workers":[{"id":"ru-1","fingerprint":"ab","status":"allowed","connected":true,"version":"1","ytdlp_version":null,"cert_not_after":"2027-11-12T00:00:00Z","last_seen_at":"2026-11-03T11:00:00Z","is_poller":true}],"queue":{"queued":3,"running":1},"errors_24h":{"tiktok":1,"instagram":2,"telegram":0},"disk":{"used_bytes":900,"total_bytes":1000,"cache_bytes":5},"versions":{"core":"v1","app_latest":""}}""",
         )
         val st = admin.status()
         assertEquals(WorkerStatus.ALLOWED, st.workers.single().status)
+        assertEquals(java.time.Instant.parse("2027-11-12T00:00:00Z"), st.workers.single().certNotAfter)
         assertEquals(2, st.errors24h.instagram)
         assertEquals(0.9f, st.disk.usedFraction, 0.001f)
         assertNull(st.appLatestVersion)

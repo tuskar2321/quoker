@@ -81,10 +81,12 @@ w.{$DOMAIN} {
 	reverse_proxy @grpc h2c://core:9090 {
 		header_up X-Client-Cert-Fingerprint {http.request.tls.client.fingerprint}
 		header_up X-Client-Cert-CN {http.request.tls.client.subject}
+		header_up X-Client-Cert-DER {http.request.tls.client.certificate_der_base64}
 	}
 	reverse_proxy /internal/* core:8081 {
 		header_up X-Client-Cert-Fingerprint {http.request.tls.client.fingerprint}
 		header_up X-Client-Cert-CN {http.request.tls.client.subject}
+		header_up X-Client-Cert-DER {http.request.tls.client.certificate_der_base64}
 	}
 }
 ```

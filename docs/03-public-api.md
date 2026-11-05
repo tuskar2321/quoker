@@ -147,7 +147,7 @@
 | POST | `/v1/admin/users/{id}/block` | — | `204`, сессии отозваны; заблокировать себя нельзя — `403 forbidden` |
 | POST | `/v1/admin/users/{id}/unblock` | — | `204`, сессии, отозванные блокировкой, восстанавливаются (вышедшие через logout — нет) |
 | PUT | `/v1/admin/instagram-cookies` | `text/plain` (Netscape cookies.txt) | `204` |
-| GET | `/v1/admin/workers` | — | `{items: [{id, fingerprint, status, connected, version, ytdlp_version, last_seen_at, is_poller}]}` |
+| GET | `/v1/admin/workers` | — | `{items: [{id, fingerprint, status, connected, version, ytdlp_version, cert_not_after, last_seen_at, is_poller}]}` |
 | POST | `/v1/admin/workers` | `{id, fingerprint}` | `201` — разрешить |
 | DELETE | `/v1/admin/workers/{id}` | — | `204` — отозвать, стрим рвётся |
 

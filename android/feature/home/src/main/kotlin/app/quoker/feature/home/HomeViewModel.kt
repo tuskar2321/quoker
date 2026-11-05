@@ -2,13 +2,14 @@ package app.quoker.feature.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.quoker.core.common.Clock
 import app.quoker.core.common.link.Link
 import app.quoker.core.common.link.LinkExtractor
 import app.quoker.core.common.link.LinkResult
 import app.quoker.core.data.model.HistoryActionType
 import app.quoker.core.data.model.HistoryItem
 import app.quoker.core.data.model.Platform
-import app.quoker.core.data.model.WorkerStatus
+import app.quoker.core.data.model.noWorkersAlert
 import app.quoker.core.data.repository.AdminRepository
 import app.quoker.core.data.repository.AuthRepository
 import app.quoker.core.data.repository.HistoryRepository
@@ -57,7 +58,7 @@ data class HomeUiState(
     val clipboardLink: Link? = null,
     val recent: List<RecentItem> = emptyList(),
     val offline: Boolean = false,
-    /** Admin only: the core reports no connected worker. */
+    /** Admin only: no worker has been connected for 5 minutes (docs/08). */
     val noWorkers: Boolean = false,
 ) {
     val canOpen: Boolean get() = link.isNotBlank()
@@ -73,6 +74,7 @@ class HomeViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val admin: AdminRepository,
     network: NetworkMonitor,
+    private val clock: Clock,
 ) : ViewModel() {
     private data class Input(val link: String = "", val linkError: String? = null, val clipboard: Link? = null)
 
@@ -173,7 +175,7 @@ class HomeViewModel @Inject constructor(
                     return
                 }
                 val status = this.admin.status()
-                noWorkers.value = status.workers.none { it.connected && it.status == WorkerStatus.ALLOWED }
+                noWorkers.value = status.workers.noWorkersAlert(clock.now())
             } catch (_: QuokerException) {
                 // Keep the last known value.
             }

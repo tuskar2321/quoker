@@ -43,6 +43,7 @@ class DownloadPipeline @Inject constructor(
     private val videos: VideoRepository,
     private val fetcher: RangeFileFetcher,
     private val saver: VideoSaver,
+    private val savedVideos: SavedVideos,
     @DownloadCacheDir private val cacheDir: File,
 ) {
     suspend fun run(videoId: String, onProgress: suspend (DownloadProgress) -> Unit): DownloadOutcome {
@@ -82,6 +83,7 @@ class DownloadPipeline @Inject constructor(
             return DownloadOutcome.Failed(DownloadErrors.storagePermission)
         }
         temp.delete()
+        savedVideos.record(videoId, uri)
         markDownloaded(videoId)
         return DownloadOutcome.Saved(uri)
     }

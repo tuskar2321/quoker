@@ -6,7 +6,7 @@ import app.quoker.core.common.Clock
 import app.quoker.core.common.QuokerError
 import app.quoker.core.data.model.AdminStatus
 import app.quoker.core.data.model.UserStatus
-import app.quoker.core.data.model.WorkerStatus
+import app.quoker.core.data.model.noWorkersAlert
 import app.quoker.core.data.repository.AdminRepository
 import app.quoker.core.network.QuokerException
 import app.quoker.feature.settings.R
@@ -44,14 +44,14 @@ data class AdminStatusUiState(
     val message: UiMessage? = null,
     val now: Instant = Instant.EPOCH,
 ) {
-    val onlineWorkers get() = status?.workers.orEmpty().filter { it.connected && it.status == WorkerStatus.ALLOWED }
+    val onlineWorkers get() = status?.workers.orEmpty().filter { it.isOnline }
     val poller get() = onlineWorkers.firstOrNull { it.isPoller }
 
     val alerts: List<AdminAlert>
         get() {
             val s = status ?: return emptyList()
             return buildList {
-                if (onlineWorkers.isEmpty()) add(AdminAlert.NoWorkers)
+                if (s.workers.noWorkersAlert(now)) add(AdminAlert.NoWorkers)
                 if (s.errors24h.instagram > 0) add(AdminAlert.InstagramErrors(s.errors24h.instagram))
                 val percent = diskPercent(s)
                 if (percent > DISK_ALERT_PERCENT) add(AdminAlert.DiskAlmostFull(percent, s.disk.cacheBytes))
@@ -105,7 +105,7 @@ class AdminStatusViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val status = admin.status()
-                _state.update { it.copy(status = status, error = null) }
+                _state.update { it.copy(status = status, error = null, now = clock.now()) }
             } catch (e: QuokerException) {
                 _state.update { if (it.status == null) it.copy(error = e.error) else it.copy(message = UiMessage.Failure(e.error)) }
             }

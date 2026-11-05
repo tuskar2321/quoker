@@ -25,7 +25,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** The sheets MainActivity shows over the NavHost; "Куда отправить" stacks above "Видео". */
-data class MainSheets(val video: VideoSource? = null, val sendVideoId: String? = null)
+data class MainSheets(
+    val video: VideoSource? = null,
+    val sendVideoId: String? = null,
+    /** «Повторить»: the failed send whose target "Куда отправить" preselects. */
+    val sendRetryId: Long? = null,
+    /** «Скачать снова» in the history: the video sheet starts the download (asks first if saved). */
+    val downloadOnOpen: Boolean = false,
+)
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -47,10 +54,14 @@ class MainViewModel @Inject constructor(
         savedState.getStateFlow<String?>(KEY_VIDEO_URL, null),
         savedState.getStateFlow<String?>(KEY_VIDEO_ID, null),
         savedState.getStateFlow<String?>(KEY_SEND_ID, null),
-    ) { url, id, send ->
+        savedState.getStateFlow<Long?>(KEY_SEND_RETRY, null),
+        savedState.getStateFlow(KEY_DOWNLOAD_ON_OPEN, false),
+    ) { url, id, send, retry, download ->
         MainSheets(
             video = url?.let(VideoSource::Url) ?: id?.let(VideoSource::Id),
             sendVideoId = send,
+            sendRetryId = retry?.takeIf { send != null },
+            downloadOnOpen = download && (url != null || id != null),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, MainSheets())
 
@@ -77,7 +88,8 @@ class MainViewModel @Inject constructor(
         _pending.value = null
     }
 
-    fun openVideo(source: VideoSource) {
+    fun openVideo(source: VideoSource, download: Boolean = false) {
+        savedState[KEY_DOWNLOAD_ON_OPEN] = download
         savedState[KEY_VIDEO_URL] = (source as? VideoSource.Url)?.url
         savedState[KEY_VIDEO_ID] = (source as? VideoSource.Id)?.videoId
     }
@@ -86,14 +98,22 @@ class MainViewModel @Inject constructor(
         if (sheets.value.video != null) refreshHistory()
         savedState[KEY_VIDEO_URL] = null
         savedState[KEY_VIDEO_ID] = null
+        savedState[KEY_DOWNLOAD_ON_OPEN] = false
     }
 
-    fun openSend(videoId: String) {
+    /** The video sheet took the download request; it must not repeat after recreation. */
+    fun consumeDownloadOnOpen() {
+        savedState[KEY_DOWNLOAD_ON_OPEN] = false
+    }
+
+    fun openSend(videoId: String, retrySendId: Long? = null) {
+        savedState[KEY_SEND_RETRY] = retrySendId
         savedState[KEY_SEND_ID] = videoId
     }
 
     fun closeSend() {
         savedState[KEY_SEND_ID] = null
+        savedState[KEY_SEND_RETRY] = null
     }
 
     fun closeSheets() {
@@ -125,5 +145,7 @@ class MainViewModel @Inject constructor(
         const val KEY_VIDEO_URL = "sheet.video.url"
         const val KEY_VIDEO_ID = "sheet.video.id"
         const val KEY_SEND_ID = "sheet.send.videoId"
+        const val KEY_DOWNLOAD_ON_OPEN = "sheet.video.download"
+        const val KEY_SEND_RETRY = "sheet.send.retrySendId"
     }
 }
