@@ -122,18 +122,28 @@ func NormalizeFingerprint(fp string) string {
 
 // AllowWorker registers or re-allows a worker certificate.
 func (s *Service) AllowWorker(ctx context.Context, id, fingerprint string) error {
+	return AllowWorker(ctx, s.d.Store.DB(), s.d.Now(), id, fingerprint)
+}
+
+// AllowWorker registers or re-allows a worker certificate directly in the
+// database; the CLI uses it before any worker or bot is available. A worker
+// allowed this way is accepted on its next connect.
+func AllowWorker(ctx context.Context, db *sql.DB, now time.Time, id, fingerprint string) error {
 	fp := NormalizeFingerprint(fingerprint)
 	if !workerIDPattern.MatchString(id) || !fingerprintPattern.MatchString(fp) {
 		return errs.New(errs.InvalidRequest, "worker id or fingerprint is malformed")
 	}
-	_, err := s.d.Store.DB().ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO workers (id, fingerprint, status, created_at) VALUES (?, ?, 'allowed', ?)
 		 ON CONFLICT(id) DO UPDATE SET fingerprint = excluded.fingerprint, status = 'allowed'`,
-		id, fp, s.d.Now().UnixMilli())
+		id, fp, now.UnixMilli())
 	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: workers.fingerprint") {
 		return errs.New(errs.InvalidRequest, "fingerprint belongs to another worker")
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("allow worker: %w", err)
+	}
+	return nil
 }
 
 // RevokeWorker revokes a worker and drops its stream.

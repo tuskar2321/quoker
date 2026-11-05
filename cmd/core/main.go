@@ -9,6 +9,8 @@
 //	core release add <version_code> <version_name> <apk> [changelog|-]
 //	                                    publish an APK; "-" reads the changelog from stdin
 //	core release list                   list published APKs
+//	core workers allow <id> <fingerprint>
+//	                                    allow a worker certificate (SHA-256 hex)
 package main
 
 import (
@@ -63,7 +65,8 @@ const (
 	shutdownTimeout = 20 * time.Second
 	cliTimeout      = 30 * time.Second
 	usage           = "usage: core [serve] | core admin bootstrap | core settings set <key> <value|-> | " +
-		"core release add <version_code> <version_name> <apk> [changelog|-] | core release list"
+		"core release add <version_code> <version_name> <apk> [changelog|-] | core release list | " +
+		"core workers allow <id> <fingerprint>"
 )
 
 func main() {
@@ -127,6 +130,15 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 				return err
 			}
 			_, err = fmt.Fprintf(stdout, "published %s (%d) as %s, sha256 %s\n", r.VersionName, r.VersionCode, r.FileName, r.SHA256)
+			return err
+		})
+	case len(args) == 4 && args[0] == "workers" && args[1] == "allow":
+		// The first worker is allowed here: the bot needs a worker to talk to Telegram.
+		return withStore(cfg, func(ctx context.Context, st *store.Store) error {
+			if err := admin.AllowWorker(ctx, st.DB(), time.Now(), args[2], args[3]); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(stdout, "worker %s allowed\n", args[2])
 			return err
 		})
 	case len(args) == 2 && args[0] == "release" && args[1] == "list":
