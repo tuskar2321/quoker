@@ -5,6 +5,7 @@ package link
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,10 @@ const (
 	defaultDrain       = 30 * time.Second
 	cancelResultsGrace = 5 * time.Second
 	closeGrace         = 2 * time.Second
+	// defaultOutageAfter is how long the core may stay unreachable before the
+	// worker tells the admin itself (docs/02); outageSendTimeout bounds that call.
+	defaultOutageAfter = 5 * time.Minute
+	outageSendTimeout  = 15 * time.Second
 )
 
 // TaskHandler is called for each task dispatched by the core.
@@ -51,6 +56,11 @@ type TaskHandler interface {
 type Conn interface {
 	SendResult(r *linkv1.TaskResult) error
 	SendProgress(taskID string, percent int32) error
+}
+
+// Messenger is the part of the Telegram client used for the outage alert.
+type Messenger interface {
+	Call(ctx context.Context, base, token, method string, params []byte) (json.RawMessage, error)
 }
 
 // Config is the configuration for the worker link client.
@@ -70,6 +80,12 @@ type Config struct {
 	// Drain is how long running tasks may finish after Run's context ends;
 	// zero means 30 s.
 	Drain time.Duration
+	// Telegram, when set, sends the "core unreachable" alert to the admin
+	// chat from the last Config the core sent. Nil disables the alert.
+	Telegram Messenger
+	// OutageAfter is how long the core may be unreachable before the alert;
+	// zero means 5 minutes.
+	OutageAfter time.Duration
 }
 
 // ErrNotConnected is returned when there is no live stream to the core.
@@ -87,14 +103,16 @@ type Client struct {
 	log *slog.Logger
 	now func() time.Time
 
-	mu       sync.Mutex
-	sc       *streamConn    // writer of the live stream, nil when disconnected
-	cfgV     *linkv1.Config // last received Config from core
-	tasks    map[string]context.CancelFunc
-	outbox   []*linkv1.TaskResult
-	wg       sync.WaitGroup
-	taskCtx  context.Context // parent of task contexts; outlives the stop signal
-	draining bool
+	mu        sync.Mutex
+	sc        *streamConn    // writer of the live stream, nil when disconnected
+	cfgV      *linkv1.Config // last received Config from core
+	tasks     map[string]context.CancelFunc
+	outbox    []*linkv1.TaskResult
+	wg        sync.WaitGroup
+	taskCtx   context.Context // parent of task contexts; outlives the stop signal
+	draining  bool
+	outage    *time.Timer // set while the core is unreachable; one alert per outage
+	outageGen int         // identifies the outage a timer belongs to
 }
 
 // New creates a Client. Call Run to start connecting.
@@ -107,6 +125,9 @@ func New(cfg Config, log *slog.Logger, now func() time.Time) *Client {
 	}
 	if cfg.Drain <= 0 {
 		cfg.Drain = defaultDrain
+	}
+	if cfg.OutageAfter <= 0 {
+		cfg.OutageAfter = defaultOutageAfter
 	}
 	return &Client{cfg: cfg, log: log, now: now, tasks: map[string]context.CancelFunc{}, taskCtx: context.Background()}
 }
@@ -214,6 +235,7 @@ func (c *Client) Run(stop context.Context) {
 		closeStream()
 	}()
 	defer c.wg.Wait()
+	defer c.endOutage()
 
 	attempts := 0
 	for {
@@ -231,6 +253,9 @@ func (c *Client) Run(stop context.Context) {
 		}
 		attempts++
 		healthy, err := c.connect(ctx)
+		if ctx.Err() == nil && !errors.Is(err, errRevoked) {
+			c.beginOutage()
+		}
 		if healthy {
 			attempts = 1 // the next drop retries after a second, not after the old backoff
 		}
@@ -387,6 +412,7 @@ func (c *Client) runStream(ctx, streamCtx context.Context, stream linkv1.LinkSer
 				c.mu.Unlock()
 				c.log.Info("config received", "poll_updates", v.Config.PollUpdates)
 				if first {
+					c.endOutage()
 					healthy = true
 					c.flushOutbox(sc)
 				}
@@ -418,6 +444,60 @@ func (c *Client) runStream(ctx, streamCtx context.Context, stream linkv1.LinkSer
 			}
 		}
 	}
+}
+
+// beginOutage starts the outage timer unless one runs already. A worker that
+// never received a Config has nothing to alert with and stays quiet.
+func (c *Client) beginOutage() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.outage != nil || c.cfgV == nil || c.cfg.Telegram == nil {
+		return
+	}
+	c.outageGen++
+	gen := c.outageGen
+	c.outage = time.AfterFunc(c.cfg.OutageAfter, func() { c.outageElapsed(gen) })
+}
+
+// endOutage cancels the outage timer; the next drop starts a new outage.
+func (c *Client) endOutage() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.outage != nil {
+		c.outage.Stop()
+		c.outage = nil
+	}
+}
+
+// outageElapsed tells the admin once that the core is unreachable. The timer
+// stays set until the worker reconnects, so retries do not repeat the alert.
+func (c *Client) outageElapsed(gen int) {
+	c.mu.Lock()
+	if c.outage == nil || c.outageGen != gen {
+		c.mu.Unlock()
+		return
+	}
+	cfg := c.cfgV
+	c.mu.Unlock()
+	if cfg == nil || cfg.BotToken == "" || cfg.AdminChatId == 0 {
+		c.log.Warn("core unreachable, but no bot token or admin chat to alert")
+		return
+	}
+	params, err := json.Marshal(map[string]any{
+		"chat_id": cfg.AdminChatId,
+		"text":    fmt.Sprintf("⚠️ Воркер %s не может подключиться к ядру 5 минут", c.cfg.WorkerID),
+	})
+	if err != nil {
+		c.log.Error("outage alert", "err", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), outageSendTimeout)
+	defer cancel()
+	if _, err := c.cfg.Telegram.Call(ctx, cfg.BotApiBase, cfg.BotToken, "sendMessage", params); err != nil {
+		c.log.Warn("outage alert not sent", "err", err)
+		return
+	}
+	c.log.Info("admin told that the core is unreachable")
 }
 
 // startTask runs a dispatched task unless it is already running here (the

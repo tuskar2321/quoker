@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -658,9 +659,10 @@ func defaultLease(k queue.Kind) time.Duration {
 func (s *Server) loadConfig(ctx context.Context, workerID string) (*linkv1.Config, error) {
 	// A read error must not hand the worker an empty token or cookies, which
 	// would make it fail silently.
-	var botToken, cookies, pollerID string
+	var botToken, cookies, pollerID, adminChat string
 	for key, dst := range map[settings.Key]*string{
 		settings.BotToken: &botToken, settings.InstagramCookies: &cookies, settings.PollerWorkerID: &pollerID,
+		settings.AdminChatID: &adminChat,
 	} {
 		v, _, err := s.set.Get(ctx, key)
 		if err != nil {
@@ -668,7 +670,10 @@ func (s *Server) loadConfig(ctx context.Context, workerID string) (*linkv1.Confi
 		}
 		*dst = v
 	}
+	// An unset or malformed chat id stays 0: the worker then has no alert target.
+	adminChatID, _ := strconv.ParseInt(adminChat, 10, 64)
 	return &linkv1.Config{
+		AdminChatId:      adminChatID,
 		BotToken:         botToken,
 		InstagramCookies: cookies,
 		PollUpdates:      pollerID == workerID,
@@ -1023,7 +1028,7 @@ func (s *Server) purgeUpdates(ctx context.Context) error {
 // settingsInterval is how often the worker-facing settings are checked.
 const settingsInterval = time.Minute
 
-// settingsLoop notices bot_token and instagram_cookies written by another
+// settingsLoop notices bot_token, instagram_cookies and admin_chat_id written by another
 // process (the CLI writes straight to the database) and pushes a new Config
 // to every worker. Changes made through the bot already broadcast; a second
 // Config is harmless.
@@ -1063,14 +1068,16 @@ func (s *Server) checkSettings(ctx context.Context, last settingsStamp) settings
 	return cur
 }
 
-type settingsStamp struct{ token, cookies int64 }
+type settingsStamp struct{ token, cookies, adminChat int64 }
 
 func (s *Server) settingsStamps(ctx context.Context) (settingsStamp, error) {
 	var st settingsStamp
 	err := s.st.DB().QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(CASE WHEN key = ? THEN updated_at END), 0),
+		       COALESCE(MAX(CASE WHEN key = ? THEN updated_at END), 0),
 		       COALESCE(MAX(CASE WHEN key = ? THEN updated_at END), 0)
-		FROM settings`, string(settings.BotToken), string(settings.InstagramCookies)).Scan(&st.token, &st.cookies)
+		FROM settings`, string(settings.BotToken), string(settings.InstagramCookies), string(settings.AdminChatID)).
+		Scan(&st.token, &st.cookies, &st.adminChat)
 	if err != nil {
 		return st, fmt.Errorf("settings stamps: %w", err)
 	}

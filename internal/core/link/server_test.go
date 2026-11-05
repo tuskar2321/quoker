@@ -794,3 +794,34 @@ func TestCertExpiryRecorded(t *testing.T) {
 		})
 	}
 }
+
+// TestAdminChatIDInConfig: the admin chat reaches workers in the initial
+// Config and in a broadcast when it changes (REVIEW N2).
+func TestAdminChatIDInConfig(t *testing.T) {
+	f := newTestFixture(t)
+	if err := f.set.Set(f.ctx, settings.AdminChatID, "500"); err != nil {
+		t.Fatal(err)
+	}
+	stream := f.connect("worker-1")
+	if f.lastConfig.AdminChatId != 500 {
+		t.Fatalf("initial admin_chat_id = %d, want 500", f.lastConfig.AdminChatId)
+	}
+	last, _ := f.srv.settingsStamps(f.ctx)
+	if _, err := f.srv.st.DB().ExecContext(f.ctx,
+		`UPDATE settings SET value = '777', updated_at = updated_at + 1000 WHERE key = ?`, string(settings.AdminChatID)); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.checkSettings(f.ctx, last)
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := msg.GetConfig(); c != nil {
+			if c.AdminChatId != 777 {
+				t.Fatalf("broadcast admin_chat_id = %d, want 777", c.AdminChatId)
+			}
+			return
+		}
+	}
+}

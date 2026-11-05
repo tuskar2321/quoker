@@ -110,6 +110,7 @@ func run(args []string, getenv func(string) string) error {
 		CoreAddr:     cfg.CoreAddr,
 		TLSConfig:    tlsCfg,
 		Handler:      taskRunner,
+		Telegram:     tg,
 		// The poller exists before any ack can arrive: acks need a stream,
 		// and the stream starts with client.Run below.
 		OnBotUpdateAck: func(id int64) { poller.Ack(id) },

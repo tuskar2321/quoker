@@ -1070,6 +1070,7 @@ type Config struct {
 	MaxDownloadBytes int64                  `protobuf:"varint,6,opt,name=max_download_bytes,json=maxDownloadBytes,proto3" json:"max_download_bytes,omitempty"` // hard cap for phone downloads
 	BotApiBase       string                 `protobuf:"bytes,7,opt,name=bot_api_base,json=botApiBase,proto3" json:"bot_api_base,omitempty"`                    // default https://api.telegram.org; overridable for tests
 	UploadBase       string                 `protobuf:"bytes,8,opt,name=upload_base,json=uploadBase,proto3" json:"upload_base,omitempty"`                      // https://w.<domain>/internal/v1
+	AdminChatId      int64                  `protobuf:"varint,9,opt,name=admin_chat_id,json=adminChatId,proto3" json:"admin_chat_id,omitempty"`                // 0 if unknown; the worker alerts it when the core is unreachable
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1158,6 +1159,13 @@ func (x *Config) GetUploadBase() string {
 		return x.UploadBase
 	}
 	return ""
+}
+
+func (x *Config) GetAdminChatId() int64 {
+	if x != nil {
+		return x.AdminChatId
+	}
+	return 0
 }
 
 type Task struct {
@@ -1781,7 +1789,7 @@ const file_quoker_link_v1_link_proto_rawDesc = "" +
 	"\theartbeat\x18\x04 \x01(\v2\x19.quoker.link.v1.HeartbeatH\x00R\theartbeat\x12D\n" +
 	"\x0ebot_update_ack\x18\x05 \x01(\v2\x1c.quoker.link.v1.BotUpdateAckH\x00R\fbotUpdateAck\x126\n" +
 	"\bshutdown\x18\x06 \x01(\v2\x18.quoker.link.v1.ShutdownH\x00R\bshutdownB\x05\n" +
-	"\x03msg\"\xaf\x02\n" +
+	"\x03msg\"\xd3\x02\n" +
 	"\x06Config\x12\x1b\n" +
 	"\tbot_token\x18\x01 \x01(\tR\bbotToken\x12+\n" +
 	"\x11instagram_cookies\x18\x02 \x01(\tR\x10instagramCookies\x12!\n" +
@@ -1792,7 +1800,8 @@ const file_quoker_link_v1_link_proto_rawDesc = "" +
 	"\fbot_api_base\x18\a \x01(\tR\n" +
 	"botApiBase\x12\x1f\n" +
 	"\vupload_base\x18\b \x01(\tR\n" +
-	"uploadBase\"\xb1\x02\n" +
+	"uploadBase\x12\"\n" +
+	"\radmin_chat_id\x18\t \x01(\x03R\vadminChatId\"\xb1\x02\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x19\n" +
 	"\blease_ms\x18\x02 \x01(\x03R\aleaseMs\x127\n" +

@@ -124,6 +124,7 @@ message Config {
   int64 max_download_bytes = 6;   // hard cap for phone downloads
   string bot_api_base = 7;        // default https://api.telegram.org; overridable for tests
   string upload_base = 8;         // https://w.<domain>/internal/v1
+  int64 admin_chat_id = 9;        // 0 if unknown; the worker alerts it when the core is unreachable
 }
 
 message Task {

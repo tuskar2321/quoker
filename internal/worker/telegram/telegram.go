@@ -258,7 +258,7 @@ type Update struct {
 }
 
 // AllowedUpdates are the update kinds the core handles (docs/04-core-worker-protocol.md).
-var AllowedUpdates = []string{"message", "my_chat_member", "chat_member", "callback_query"}
+var AllowedUpdates = []string{"message", "my_chat_member"}
 
 // GetUpdates long-polls for updates starting at offset.
 func (c *Client) GetUpdates(ctx context.Context, base, token string, offset int64, timeoutS int) ([]Update, error) {
