@@ -102,6 +102,9 @@ make build        # бинарники в bin/
 cp .env.example .env.local
 make run-core     # локальное ядро
 make run-worker   # локальный воркер (нужен yt-dlp)
+
+make dev          # ядро + воркер + фейковый Telegram в Docker
+make dev-down
 ```
 
 ```sh
@@ -139,7 +142,8 @@ Debug-сборка ходит в API по `http://10.0.2.2:8080` — так эм
 | --- | --- |
 | ✅ Ядро, воркер, бот | Готовы, покрыты тестами |
 | ✅ Android-клиент | Готов, проверен на эмуляторе против локального ядра |
-| 🚧 Развёртывание | `deploy/` (bootstrap, compose, Caddyfile, REALITY), CI/CD и `make dev` — в работе |
+| ✅ Развёртывание | `deploy/` (bootstrap, compose, Caddyfile, REALITY), CI/CD и локальный стенд `make dev` готовы |
+| 🚧 Продакшн | Первое развёртывание на серверы — впереди |
 
 ## Безопасность
 

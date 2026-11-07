@@ -114,5 +114,5 @@ Telegram (аккаунт, «Отвязать» с подтверждением),
 ## Сборка
 
 - Gradle Kotlin DSL, version catalog `gradle/libs.versions.toml`.
-- `release` подписывается keystore из секретов CI; `versionCode` = номер сборки CI, `versionName` из тега `app-v<x.y.z>`.
+- `release` подписывается keystore из секретов CI; `versionName` из тега `app-v<x.y.z>`, `versionCode` = x·10000 + y·100 + z (y и z меньше 100): `app-v0.2.0` → 200, `app-v1.0.0` → 10000. Один и тот же тег всегда даёт один и тот же код.
 - R8 включён для `release`; правила для kotlinx.serialization и Retrofit.

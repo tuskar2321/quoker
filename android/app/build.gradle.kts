@@ -44,7 +44,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            buildConfigField("String", "API_BASE_URL", "\"${apiBaseUrlOverride ?: "https://api.quoker.app"}\"")
+            buildConfigField("String", "API_BASE_URL", "\"${apiBaseUrlOverride ?: "https://api.quoker.ru"}\"")
             signingConfig = signingConfigs.findByName("release")
         }
     }

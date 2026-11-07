@@ -2,7 +2,7 @@
 
 Это руководство для того, кто держит Quoker в рабочем состоянии: раздаёт приглашения, следит за воркерами, обновляет cookies Instagram и выпускает новые версии приложения. Архитектура и требования описаны в `docs/01`–`docs/12`; здесь — только то, что нужно делать руками.
 
-> **Статус.** Ядро, воркер, бот и Android-клиент готовы. Скрипты развёртывания (`deploy/`) и CI/CD (`.github/workflows/`) ещё пишутся. Команды вида `docker compose exec core …` ниже даны для будущей схемы из `docs/10-deploy.md`. Пока её нет, те же команды запускаются бинарником ядра напрямую: `core …` с переменными окружения ядра.
+> **Где выполнять команды.** Команды `docker compose …` ниже выполняются на сервере ядра под пользователем `deploy` в каталоге `/opt/app` (`cd /opt/app`). Развёртывание серверов — в `docs/10-deploy.md`, скрипты для ПК — в `deploy/pc/`.
 
 ## Содержание
 
@@ -62,15 +62,18 @@
 
    Username бота ядро узнает само (`getMe`), как только на связи появится воркер.
 
-3. **Выпустите сертификат первого воркера** на ПК (корневой CA хранится только там):
+3. **Выпустите сертификат первого воркера** на ПК. Корневой CA создаётся один раз и хранится только на ПК и в офлайн-копии:
 
    ```sh
-   step certificate create worker-1 worker.crt worker.key --profile leaf \
-     --ca ca.crt --ca-key ca.key --not-after 8760h --no-password --insecure
-   step certificate fingerprint worker.crt   # SHA-256, 64 hex-символа
+   mkdir -m 700 -p ~/quoker-ca
+   step certificate create "Quoker Root CA" ~/quoker-ca/ca.crt ~/quoker-ca/ca.key \
+     --profile root-ca --not-after 87600h          # спросит пароль ключа CA
+   chmod 600 ~/quoker-ca/ca.key
+
+   deploy/pc/new-worker-cert.sh worker-1           # сертификат на 1 год
    ```
 
-   `worker-1` — это id воркера (CN сертификата). Сертификат и ключ положите на воркер в `./certs`.
+   Скрипт кладёт `worker.crt` и `worker.key` в `~/quoker-certs/worker-1/`, печатает SHA-256 отпечаток и готовые команды, как положить файлы на воркер (`/opt/app/certs/`, ключ с правами `0640`). Туда же нужен `ca.crt`. `worker-1` — id воркера (CN сертификата). После запуска воркера локальную копию ключа удалите.
 
 4. **Разрешите воркер:**
 
@@ -126,7 +129,7 @@ id, онлайн или офлайн, версии воркера и yt-dlp, с�
 - Клиентский сертификат воркера выпускается на **1 год**.
 - Ядро узнаёт срок при подключении воркера. Для этого Caddy передаёт сертификат в заголовке `X-Client-Cert-DER` (см. Caddyfile в `docs/10-deploy.md`). Без этого заголовка срок не показывается и алерт молчит.
 - За **30 дней** до истечения строка на экране «Воркеры» становится красной, а бот раз в сутки шлёт «⚠️ Сертификат worker-1 истекает через N дн.».
-- **Как обновить:** выпустите новый сертификат с тем же CN (шаг 3 первого запуска), разрешите новый отпечаток для того же id, замените файлы на воркере и перезапустите его.
+- **Как обновить:** выпустите новый сертификат с тем же id — `deploy/pc/new-worker-cert.sh worker-1` (если в `~/quoker-certs/worker-1/` остались старые файлы, перенесите их: скрипт не перезаписывает ключ). Разрешите новый отпечаток для того же id (`/allow_worker` или `core workers allow`), положите файлы на воркер и перезапустите его: `docker compose up -d worker`.
 
 ## 7. Cookies Instagram
 
@@ -173,44 +176,66 @@ Cookies — секрет: не храните файл в репозитории
 
 Приложение распространяется APK-файлом с ядра и само предлагает обновиться: проверяет версию при запуске не чаще раза в сутки, а также по кнопке «Проверить обновления» в настройках.
 
-1. **Соберите подписанный APK** (позже это будет делать workflow `release-android` по тегу `app-v*`):
+**Номер версии** берётся из тега: `app-vX.Y.Z` → `versionName` = `X.Y.Z`, `versionCode` = X·10000 + Y·100 + Z (Y и Z меньше 100). Примеры: `app-v0.2.0` → 200, `app-v0.2.1` → 201, `app-v1.0.0` → 10000.
+
+1. **Поставьте аннотированный тег на `master`.** Сообщение тега — это список изменений, который увидят пользователи в диалоге обновления:
 
    ```sh
-   cd android
-   ./gradlew :app:assembleRelease \
-     -Pquoker.versionCode=2 -Pquoker.versionName=0.2.0 \
-     -Pquoker.apiBaseUrl=https://api.<домен> \
-     -Pquoker.signing.storeFile=/путь/к/release.jks \
-     -Pquoker.signing.storePassword=… -Pquoker.signing.keyAlias=… -Pquoker.signing.keyPassword=…
+   git tag -a app-v0.2.0 -m "Быстрее открывается видео
+   Исправлены склонения"
+   git push origin app-v0.2.0
    ```
 
-   `versionCode` должен быть больше предыдущего. Подписывайте всегда одним и тем же ключом: APK с другой подписью поверх старого не установится. Пароли удобнее передавать переменными окружения `QUOKER_SIGNING_*`, чтобы они не оставались в истории shell.
+2. **Workflow `release-android` сделает остальное:** соберёт APK, подпишет ключом из секретов GitHub, скопирует его на ядро и зарегистрирует (`core release add`). Ядро проверяет, что это APK, считает SHA-256 и отклоняет версию не выше уже опубликованной.
 
-2. **Опубликуйте** — скопируйте APK в каталог релизов ядра и зарегистрируйте его. Список изменений читается из stdin:
+3. **Проверьте:** `docker compose exec core core release list` — новая версия в списке; в приложении «Проверить обновления» предлагает её.
+
+4. **Обязательное обновление.** Если старые версии больше не должны работать (например, изменился API), поднимите минимальную версию — в формате `versionCode`:
 
    ```sh
-   docker compose exec -T core core release add 2 0.2.0 /releases/quoker-0.2.0.apk - < changelog.txt
-   docker compose exec core core release list
+   docker compose exec core core settings set min_supported_version_code 200
    ```
 
-   Ядро проверяет, что это APK, считает SHA-256 и отклоняет занятые `version_code` и `version_name`.
+   Приложения с меньшим `versionCode` покажут экран «Обновите приложение» и не пустят дальше, пока не обновятся. Поднимайте минимум только **после** публикации релиза.
 
-3. **Обязательное обновление.** Если старые версии больше не должны работать (например, изменился API), поднимите минимальную версию:
+Подписывайте всегда одним ключом (`~/quoker-signing/quoker-release.jks` и его офлайн-копия): APK с другой подписью поверх установленного не встанет, придётся удалять приложение. При первой установке обновления Android попросит разрешить установку из этого источника — это нормально.
 
-   ```sh
-   docker compose exec core core settings set min_supported_version_code 2
-   ```
+**Вручную, если CI недоступен:**
 
-   Приложения с меньшим `versionCode` покажут экран «Обновите приложение» и не пустят дальше, пока не обновятся. Публикуйте релиз **до** того, как поднимаете минимум.
-
-При первой установке обновления Android попросит разрешить установку из этого источника — это нормально.
+```sh
+cd android
+QUOKER_SIGNING_STORE_FILE=~/quoker-signing/quoker-release.jks QUOKER_SIGNING_KEY_ALIAS=quoker \
+QUOKER_SIGNING_STORE_PASSWORD=… QUOKER_SIGNING_KEY_PASSWORD=… \
+./gradlew :app:assembleRelease -Pquoker.versionCode=200 -Pquoker.versionName=0.2.0
+scp app/build/outputs/apk/release/app-release.apk deploy@<ядро>:/opt/app/releases/quoker-0.2.0.apk
+ssh deploy@<ядро> 'cd /opt/app && docker compose exec -T core core release add 200 0.2.0 /releases/quoker-0.2.0.apk -' < changelog.txt
+```
 
 ## 10. Бэкапы
 
-- Ядро каждый день в 04:00 МСК и перед каждой выкладкой делает снимок БД (`VACUUM INTO /backups/quoker-<дата>.db`) и хранит 7 последних.
+- Ядро каждый день в 04:00 МСК и перед каждой выкладкой делает снимок БД в `/opt/app/backups/quoker-<ГГГГММДД-ЧЧММСС>.db` (время UTC) и хранит 7 последних. Вручную: `docker compose exec core core backup`.
 - ПК забирает снимки скриптом `deploy/pc/backup-pull.sh` по таймеру и хранит 30, на зашифрованном диске.
 - Раз в месяц на ПК проверяйте последний снимок: `sqlite3 quoker-<дата>.db 'PRAGMA integrity_check'` — должно быть `ok`.
-- **Восстановление:** остановить `core`, положить снимок на место `data/quoker.db`, запустить `core`. Кэш видео восстанавливать не нужно: ядро само уберёт записи без файлов.
+- **Восстановление:**
+
+  У `deploy` нет sudo, а `data/` принадлежит uid 10001, поэтому файлы меняются одноразовым контейнером от этого uid. Образ Caddy уже есть на сервере и, в отличие от образа ядра, содержит `sh` и `cp`:
+
+  ```sh
+  cd /opt/app
+  docker compose stop core
+  SNAP=quoker-<ГГГГММДД-ЧЧММСС>.db        # нужный снимок из ls backups/
+  docker run --rm --user 10001:10001 --entrypoint sh \
+    -v "$PWD/data:/data" -v "$PWD/backups:/backups:ro" \
+    "ghcr.io/tuskar2321/quoker-caddy:$(grep '^CADDY_TAG=' .env | cut -d= -f2)" -c "
+      cp /data/quoker.db /data/quoker.db.broken &&
+      rm -f /data/quoker.db-wal /data/quoker.db-shm &&
+      cp /backups/$SNAP /data/quoker.db"
+  docker compose start core
+  ```
+
+  Повреждённая база остаётся рядом как `data/quoker.db.broken`; удалите её, когда убедитесь, что всё работает.
+
+  Кэш видео восстанавливать не нужно: ядро само уберёт записи без файлов.
 
 В БД лежат токен бота и cookies — относитесь к снимкам как к секретам.
 
@@ -253,6 +278,8 @@ Cookies — секрет: не храните файл в репозитории
 | `core admin bootstrap` | Напечатать одноразовый инвайт администратора на 7 дней |
 | `core settings set <ключ> <значение>` | Записать настройку; `-` вместо значения читает его из stdin |
 | `core workers allow <id> <отпечаток>` | Разрешить сертификат воркера |
+| `core backup` | Снимок БД в `BACKUP_DIR`, хранит 7 последних |
+| `core healthcheck` | Проверка здоровья для Docker (код выхода 0 — здоров) |
 | `core release add <version_code> <version_name> <apk> [changelog\|-]` | Опубликовать APK |
 | `core release list` | Список опубликованных APK |
 
