@@ -68,6 +68,7 @@ internal fun SettingsScreen(
     onLinkTelegram: () -> Unit,
     onOpenAdmin: () -> Unit,
     onCheckUpdates: () -> Unit,
+    onSendReport: () -> Unit,
     onSignedOut: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -92,6 +93,7 @@ internal fun SettingsScreen(
             onHowToAdd = { viewModel.showDialog(SettingsDialog.HowToAdd) },
             onOpenAdmin = onOpenAdmin,
             onCheckUpdates = onCheckUpdates,
+            onSendReport = onSendReport,
             onLogout = { viewModel.showDialog(SettingsDialog.Logout) },
             onDismissMessage = viewModel::dismissMessage,
         ),
@@ -128,6 +130,7 @@ internal data class SettingsActions(
     val onHowToAdd: () -> Unit = {},
     val onOpenAdmin: () -> Unit = {},
     val onCheckUpdates: () -> Unit = {},
+    val onSendReport: () -> Unit = {},
     val onLogout: () -> Unit = {},
     val onDismissMessage: () -> Unit = {},
 )
@@ -341,6 +344,7 @@ private fun AppSection(state: SettingsUiState, actions: SettingsActions) {
             ListRow(
                 title = stringResource(R.string.settings_version),
                 subtitle = state.versionName,
+                divider = true,
                 minHeight = QuokerTheme.dimens.listRowMinHeight,
                 trailing = {
                     SecondaryButton(
@@ -349,6 +353,13 @@ private fun AppSection(state: SettingsUiState, actions: SettingsActions) {
                         size = ButtonSize.Compact,
                     )
                 },
+            )
+            ListRow(
+                title = stringResource(R.string.settings_send_report),
+                subtitle = stringResource(R.string.settings_send_report_hint),
+                trailing = { ListRowChevron() },
+                onClick = actions.onSendReport,
+                minHeight = QuokerTheme.dimens.listRowMinHeight,
             )
         }
         Spacer(Modifier.height(4.dp))

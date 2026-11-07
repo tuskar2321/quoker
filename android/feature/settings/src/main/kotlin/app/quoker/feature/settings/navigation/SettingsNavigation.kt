@@ -35,6 +35,7 @@ fun NavController.navigateToSettings(navOptions: NavOptions? = null) = navigate(
  * - [onBack]: back arrow of Settings.
  * - [onLinkTelegram]: «Привязать Telegram» (Settings reloads the account when it resumes).
  * - [onCheckUpdates]: «Проверить обновления».
+ * - [onSendReport]: «Отправить отчёт» (crash log via the share sheet).
  * - [onSignedOut]: the session is already cleared («Выйти» confirmed); go to onboarding.
  */
 fun NavGraphBuilder.settingsGraph(
@@ -42,6 +43,7 @@ fun NavGraphBuilder.settingsGraph(
     onBack: () -> Unit,
     onLinkTelegram: () -> Unit,
     onCheckUpdates: () -> Unit,
+    onSendReport: () -> Unit,
     onSignedOut: () -> Unit,
 ) {
     val popBack: () -> Unit = { navController.popBackStack() }
@@ -51,6 +53,7 @@ fun NavGraphBuilder.settingsGraph(
             onLinkTelegram = onLinkTelegram,
             onOpenAdmin = { navController.navigate(AdminRoute) { launchSingleTop = true } },
             onCheckUpdates = onCheckUpdates,
+            onSendReport = onSendReport,
             onSignedOut = onSignedOut,
         )
     }

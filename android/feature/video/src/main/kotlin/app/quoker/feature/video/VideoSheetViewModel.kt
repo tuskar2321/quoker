@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -81,8 +82,12 @@ class VideoSheetViewModel @AssistedInject constructor(
         .map { (it as? VideoContent.Ready)?.video?.id }
         .distinctUntilChanged()
 
+    // Bumped by onShown: re-observing re-checks that a «Сохранено» file is still in the gallery.
+    private val shownCount = MutableStateFlow(0)
+
     private val download: Flow<DownloadState> = combine(
-        videoId.flatMapLatest { id -> if (id == null) flowOf(DownloadState.Idle) else downloads.observe(id) },
+        combine(videoId, shownCount) { id, _ -> id }
+            .flatMapLatest { id -> if (id == null) flowOf(DownloadState.Idle) else downloads.observe(id) },
         downloadOverride,
     ) { observed, override -> override ?: observed }
 
@@ -133,6 +138,17 @@ class VideoSheetViewModel @AssistedInject constructor(
             return
         }
         startDownload(video)
+    }
+
+    /**
+     * The sheet was shown. The ViewModel outlives a closed sheet (it is keyed by the video in the
+     * activity), so one-shot state from the previous showing is reset and the saved file re-checked.
+     */
+    fun onShown() {
+        downloadRequested = false
+        confirmRedownload.value = false
+        downloadOverride.value = null
+        shownCount.update { it + 1 }
     }
 
     /**

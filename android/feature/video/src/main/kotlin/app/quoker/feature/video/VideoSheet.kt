@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -110,6 +111,12 @@ fun VideoSheet(
                 is VideoSheetEvent.RequestPermissions -> permissions.launch(event.permissions.toTypedArray())
             }
         }
+    }
+
+    // Before the download request below: it resets what the previous showing left behind.
+    DisposableEffect(viewModel) {
+        viewModel.onShown()
+        onDispose { }
     }
 
     LaunchedEffect(viewModel, downloadOnOpen) {

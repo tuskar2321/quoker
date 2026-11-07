@@ -20,6 +20,8 @@
     <string name="settings_admin">Администрирование</string>
     <string name="settings_version">Версия</string>
     <string name="settings_check_updates">Проверить обновления</string>
+    <string name="settings_send_report">Отправить отчёт</string>
+    <string name="settings_send_report_hint">Журнал ошибок для администратора</string>
     <string name="settings_logout">Выйти</string>
     <string name="settings_logout_title">Выйти из Quoker?</string>
     <string name="settings_logout_text">Чтобы войти снова, понадобится новый код приглашения.</string>

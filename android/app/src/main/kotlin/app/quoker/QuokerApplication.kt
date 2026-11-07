@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import app.quoker.core.network.di.MediaHttpClient
+import app.quoker.report.CrashLog
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -27,6 +28,11 @@ class QuokerApplication : Application(), Configuration.Provider, SingletonImageL
     @Inject
     @field:MediaHttpClient
     lateinit var mediaClient: Lazy<OkHttpClient>
+
+    override fun onCreate() {
+        super.onCreate()
+        CrashLog.forApp(this, "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})").install()
+    }
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()

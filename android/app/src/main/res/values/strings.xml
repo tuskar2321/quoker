@@ -9,4 +9,7 @@
     <string name="share_sign_in_title">Сначала войдите в Quoker</string>
     <string name="share_sign_in_text">Чтобы скачивать и отправлять видео, введите код приглашения в приложении.</string>
     <string name="share_open_app">Открыть Quoker</string>
+
+    <string name="report_subject">Отчёт Quoker</string>
+    <string name="report_chooser">Отправить отчёт</string>
 </resources>

@@ -19,12 +19,13 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavHostController
 import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
 import app.quoker.core.common.QuokerError
 import app.quoker.core.designsystem.theme.QuokerTheme
+import app.quoker.core.update.R as UpdateR
 import app.quoker.core.update.UpdateCheckResult
 import app.quoker.core.update.UpdateManager
 import app.quoker.core.update.ui.UpdateDialog
@@ -44,9 +45,9 @@ import app.quoker.feature.video.VideoSheet
 import app.quoker.feature.video.VideoSource
 import app.quoker.navigation.PendingDestination
 import app.quoker.navigation.startDestination
+import app.quoker.report.CrashLog
 import app.quoker.ui.BlockedScreen
 import kotlinx.coroutines.launch
-import app.quoker.core.update.R as UpdateR
 
 private sealed interface UpdateCheckMessage {
     data object UpToDate : UpdateCheckMessage
@@ -64,6 +65,10 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     var checkMessage by remember { mutableStateOf<UpdateCheckMessage?>(null) }
+    val context = LocalContext.current
+    val reportSubject = stringResource(R.string.report_subject)
+    val reportChooser = stringResource(R.string.report_chooser)
+    val versionLabel = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
 
     // Blank themed background until the session is known: no splash, no wrong first screen.
     Box(Modifier.fillMaxSize().background(QuokerTheme.colors.background)) {
@@ -111,6 +116,11 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
                             is UpdateCheckResult.Found -> null // UpdateManager.state opens the dialog.
                         }
                     }
+                },
+                onSendReport = {
+                    // A chooser always resolves, so no ActivityNotFoundException here.
+                    val report = CrashLog.forApp(context, versionLabel).writeReport()
+                    context.startActivity(CrashLog.shareIntent(context, report, reportSubject, reportChooser))
                 },
                 onSignedOut = { navController.navigateToInvite() },
             )
@@ -174,7 +184,6 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
     }
 
     checkMessage?.let { message ->
-        val context = LocalContext.current
         val text = when (message) {
             UpdateCheckMessage.UpToDate -> stringResource(UpdateR.string.update_up_to_date)
             is UpdateCheckMessage.Failed -> updateErrorMessage(message.error)

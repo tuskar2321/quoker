@@ -269,4 +269,24 @@ class VideoSheetViewModelTest {
             assertEquals("confirm=$confirm", if (confirm) 1 else 0, downloads.started.size)
         }
     }
+
+    @Test
+    fun reshownSheetStartsFresh() = runTest(dispatcher) {
+        val downloads = FakeVideoDownloads()
+        downloads.stateOf(video().id).value = DownloadState.Saved("content://media/1")
+        val vm = VideoSheetViewModel(VideoSource.Id(video().id), videos, auth, downloads, tracker, sends)
+        visible(vm)
+        vm.onShown()
+        vm.onDownloadRequested()
+        assertTrue(vm.state.value.confirmRedownload)
+
+        // Closed without answering, then «Скачать снова» again: asks again instead of doing nothing.
+        vm.onShown()
+        assertFalse(vm.state.value.confirmRedownload)
+        vm.onDownloadRequested()
+        assertTrue(vm.state.value.confirmRedownload)
+        val observedBefore = downloads.observeCalls
+        vm.onShown()
+        assertTrue("re-observes the saved file", downloads.observeCalls > observedBefore)
+    }
 }

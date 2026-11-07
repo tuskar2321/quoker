@@ -119,7 +119,12 @@ class FakeVideoDownloads : VideoDownloads {
         stateOf(videoId).value = DownloadState.Idle
     }
 
-    override fun observe(videoId: String): Flow<DownloadState> = stateOf(videoId)
+    var observeCalls = 0
+
+    override fun observe(videoId: String): Flow<DownloadState> {
+        observeCalls++
+        return stateOf(videoId)
+    }
     override fun needsNotificationPermission() = notificationPermissionNeeded && !notificationsAsked
     override fun onNotificationPermissionAsked() {
         notificationsAsked = true
