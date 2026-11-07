@@ -1,0 +1,13 @@
+# Pulls new core database snapshots to this PC (Linux). Started by quoker-backup-pull.timer.
+# Install: copy backup-pull.sh to ~/.local/bin/quoker-backup-pull, copy the units to
+# ~/.config/systemd/user/, then: systemctl --user daemon-reload && systemctl --user enable --now quoker-backup-pull.timer
+# Settings: ~/.config/quoker/backup-pull.env (see backup-pull.sh).
+[Unit]
+Description=Quoker: pull core database snapshots to this PC
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/quoker/backup-pull.env
+ExecStart=/usr/bin/env bash %h/.local/bin/quoker-backup-pull

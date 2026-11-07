@@ -1,0 +1,105 @@
+# Local stand for `make dev` (docs/12-testing.md, end-to-end checks). Not for production.
+# core and worker are built from this repository; the Telegram Bot API is replaced by
+# cmd/faketelegram. Values come from the Makefile (DEV_BOT_TOKEN, DEV_WORKER_ID): they are
+# dummy identifiers for this stand, not secrets.
+#
+# Why this works without changing core or worker code:
+#   - core sends bot_api_base = https://api.telegram.org to the worker (hardcoded in core);
+#   - the fake joins the compose network under the alias api.telegram.org, so the worker's
+#     DNS lookup reaches it;
+#   - the fake serves HTTPS with a certificate from a throwaway CA and writes a bundle
+#     (system roots + that CA) to the fake-ca volume; the worker reads it via SSL_CERT_FILE.
+#   - the worker runs without CLIENT_CERT: the gRPC link is plaintext and the worker sends its
+#     WORKER_ID as the certificate fingerprint, so DEV_WORKER_ID is 64 hex characters.
+name: quoker-dev
+
+services:
+  faketelegram:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/faketelegram.Dockerfile
+    environment:
+      FAKE_TELEGRAM_TOKEN: ${DEV_BOT_TOKEN:?run make dev}
+    ports:
+      # Admin API: inject updates and messages, list sent messages. Loopback only.
+      - "127.0.0.1:8099:8099"
+    volumes:
+      - fake-ca:/ca
+    networks:
+      default:
+        aliases: [api.telegram.org]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/faketelegram", "healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  core:
+    build:
+      context: ../..
+      dockerfile: deploy/images/core/Dockerfile
+      args:
+        VERSION: dev
+    environment:
+      DB_PATH: /data/quoker.db
+      CACHE_DIR: /cache
+      RELEASES_DIR: /releases
+      BACKUP_DIR: /backups
+      HTTP_ADDR: ":8080"
+      FILES_ADDR: ":8081"
+      GRPC_ADDR: ":9090"
+      # Workers reach the files server on the compose network; the peer address is trusted by default.
+      UPLOAD_BASE: http://core:8081/internal/v1
+      PUBLIC_URL: http://127.0.0.1:8080
+      LOG_LEVEL: debug
+      TZ: Europe/Moscow
+    ports:
+      # Public API for the app and for curl. Loopback only; 8081 and 9090 are not published.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - core-data:/data
+      - core-cache:/cache
+      - core-releases:/releases
+      - core-backups:/backups
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/core", "healthcheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/images/worker/Dockerfile
+      args:
+        VERSION: dev
+    command: ["serve"]
+    depends_on:
+      core:
+        condition: service_healthy
+      faketelegram:
+        condition: service_healthy
+    environment:
+      WORKER_ID: ${DEV_WORKER_ID:?run make dev}
+      CORE_ADDR: core:9090
+      MAX_PARALLEL: "2"
+      TMP_DIR: /tmp/quoker
+      YTDLP_BIN: /usr/local/bin/yt-dlp
+      LOG_LEVEL: debug
+      # The CA bundle written by faketelegram: trusts api.telegram.org served by the fake.
+      SSL_CERT_FILE: /fake-ca/ca-bundle.pem
+    volumes:
+      - fake-ca:/fake-ca:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/worker", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  core-data:
+  core-cache:
+  core-releases:
+  core-backups:
+  fake-ca:

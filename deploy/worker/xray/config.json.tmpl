@@ -1,0 +1,50 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "core-in",
+      "listen": "0.0.0.0",
+      "port": 10443,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "${CORE_HOST}",
+        "port": 443,
+        "network": "tcp"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "core-reality",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "${REALITY_SERVER}",
+            "port": 8443,
+            "users": [
+              {
+                "id": "${REALITY_UUID}",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "${REALITY_SNI}",
+          "fingerprint": "chrome",
+          "publicKey": "${REALITY_PUBLIC_KEY}",
+          "shortId": "${REALITY_SHORT_ID}",
+          "spiderX": "/"
+        }
+      }
+    }
+  ]
+}

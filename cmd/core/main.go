@@ -11,6 +11,8 @@
 //	core release list                   list published APKs
 //	core workers allow <id> <fingerprint>
 //	                                    allow a worker certificate (SHA-256 hex)
+//	core backup                         VACUUM INTO $BACKUP_DIR/quoker-<UTC time>.db, keep 7, print the path
+//	core healthcheck                    exit 0 if GET 127.0.0.1:<HTTP_ADDR port>/healthz answers 200
 package main
 
 import (
@@ -29,11 +31,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata" // Europe/Moscow even where the image has no zoneinfo
 
 	"google.golang.org/grpc"
 
 	"github.com/tuskar2321/quoker/internal/core/accounts"
 	"github.com/tuskar2321/quoker/internal/core/admin"
+	"github.com/tuskar2321/quoker/internal/core/backup"
 	"github.com/tuskar2321/quoker/internal/core/bot"
 	"github.com/tuskar2321/quoker/internal/core/botapi"
 	"github.com/tuskar2321/quoker/internal/core/config"
@@ -66,7 +70,7 @@ const (
 	cliTimeout      = 30 * time.Second
 	usage           = "usage: core [serve] | core admin bootstrap | core settings set <key> <value|-> | " +
 		"core release add <version_code> <version_name> <apk> [changelog|-] | core release list | " +
-		"core workers allow <id> <fingerprint>"
+		"core workers allow <id> <fingerprint> | core backup | core healthcheck"
 )
 
 func main() {
@@ -77,6 +81,10 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "healthcheck" {
+		// Needs only HTTP_ADDR: it must work with a minimal environment.
+		return healthcheck(or(os.Getenv("HTTP_ADDR"), ":8080"))
+	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		return err
@@ -139,6 +147,17 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 				return err
 			}
 			_, err := fmt.Fprintf(stdout, "worker %s allowed\n", args[2])
+			return err
+		})
+	case len(args) == 1 && args[0] == "backup":
+		if cfg.BackupDir == "" {
+			return errors.New("BACKUP_DIR is required")
+		}
+		return withStore(cfg, func(ctx context.Context, st *store.Store) error {
+			path, err := backup.New(st.DB(), cfg.BackupDir, nil).Run(ctx)
+			if path != "" {
+				_, _ = fmt.Fprintln(stdout, path)
+			}
 			return err
 		})
 	case len(args) == 2 && args[0] == "release" && args[1] == "list":
@@ -277,6 +296,15 @@ func serve(cfg config.Config) error {
 	})
 	spawn(botHandler.Start)
 	spawn(adminSvc.Run)
+	if cfg.BackupDir != "" {
+		loc, err := time.LoadLocation("Europe/Moscow")
+		if err != nil {
+			return fmt.Errorf("load backup timezone: %w", err)
+		}
+		sched := &backup.Scheduler{Backup: backup.New(st.DB(), cfg.BackupDir, nil), Loc: loc, Log: base.With("component", "backup")}
+		spawn(sched.Run)
+		log.Info("daily backup scheduled", "dir", cfg.BackupDir, "at", "04:00 Europe/Moscow")
+	}
 	gs := grpc.NewServer()
 	linkv1.RegisterLinkServiceServer(gs, linkSrv)
 
@@ -453,4 +481,11 @@ func registerGauges(reg *metrics.Registry, st *store.Store, link *corelink.Serve
 		func(context.Context) ([]metrics.Sample, error) {
 			return []metrics.Sample{{Value: float64(cache.MaxBytes())}}, nil
 		})
+}
+
+func or(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }

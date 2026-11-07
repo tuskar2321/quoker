@@ -1,0 +1,112 @@
+# Core server, copied to /opt/app/compose.yml (docs/10-deploy.md).
+# Image tags and settings come from /opt/app/.env (see .env.example).
+#
+# Networks:
+#   edge     - bridge with internet access; Caddy (80/443) and xray (8443, fallback) live here.
+#   backend  - internal (no internet, no published ports). Only Caddy and xray reach core
+#              ports 8080/8081/9090 from here, so core is unreachable from outside
+#              even if a port were published by mistake.
+#
+# Only Caddy publishes 80 and 443. xray publishes 8443 and runs only with --profile fallback.
+name: quoker-core
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 256
+
+services:
+  caddy:
+    <<: *hardening
+    image: ghcr.io/tuskar2321/quoker-caddy:${CADDY_TAG:?set CADDY_TAG in .env}
+    # Caddy runs as root only to bind 80/443; NET_BIND_SERVICE is the only capability it keeps.
+    cap_add: [NET_BIND_SERVICE]
+    mem_limit: 128m
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      TZ: ${TZ:-Europe/Moscow}
+    tmpfs:
+      - /config:size=16m
+      - /tmp:size=16m
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs/ca.crt:/etc/caddy/ca.crt:ro
+      - caddy_data:/data
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [edge, backend]
+    depends_on:
+      core:
+        condition: service_started
+
+  core:
+    <<: *hardening
+    image: ghcr.io/tuskar2321/quoker-core:${CORE_TAG:?set CORE_TAG in .env}
+    user: "10001:10001"
+    mem_limit: 512m
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      DB_PATH: ${DB_PATH:-/data/quoker.db}
+      CACHE_DIR: ${CACHE_DIR:-/cache}
+      CACHE_MAX_BYTES: ${CACHE_MAX_BYTES:-3221225472}
+      HTTP_ADDR: ${HTTP_ADDR:-:8080}
+      FILES_ADDR: ${FILES_ADDR:-:8081}
+      GRPC_ADDR: ${GRPC_ADDR:-:9090}
+      UPLOAD_BASE: ${UPLOAD_BASE:-}
+      RELEASES_DIR: ${RELEASES_DIR:-/releases}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-Europe/Moscow}
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - ./data:/data
+      - ./cache:/cache
+      - ./releases:/releases
+      - ./backups:/backups
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/core", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # REALITY fallback, inbound side: docker compose --profile fallback up -d xray
+  # Authenticated VLESS clients are forwarded to caddy:443 (SNI w.<domain>), so the
+  # worker's mTLS handshake reaches Caddy unchanged. Everyone else gets the masquerade site.
+  xray:
+    profiles: ["fallback"]
+    <<: *hardening
+    image: ghcr.io/tuskar2321/quoker-xray:${XRAY_TAG:?set XRAY_TAG in .env}
+    # The image default CMD has no "run" subcommand, and its default config path is not
+    # traversable by uid 10001: mount at /etc/xray and name the command explicitly.
+    command: ["run", "-confdir", "/etc/xray"]
+    # Reads config.json rendered by render-xray.sh (group quoker, mode 0640).
+    user: "10001:10001"
+    mem_limit: 128m
+    tmpfs:
+      - /tmp:size=16m
+    volumes:
+      - ./xray:/etc/xray:ro
+    ports:
+      - "8443:8443"
+    networks: [edge, backend]
+
+networks:
+  edge: {}
+  backend:
+    internal: true
+    ipam:
+      config:
+        # Inside 172.16.0.0/12, the default TRUSTED_PROXIES range of the core.
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:

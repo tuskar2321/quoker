@@ -1,0 +1,96 @@
+# Core release: image to GHCR, then deploy to the core server (docs/10-deploy.md).
+# Rollback: run this workflow again on the previous tag (the image for it is still in GHCR).
+name: release-core
+
+on:
+  push:
+    tags: ["core-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and push the core image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out (full history, the tag must be on master)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the tag and derive the version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: .github/scripts/release-version.sh core "$TAG"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/tuskar2321/quoker-core
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=sha,format=short,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/images/core/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release-core
+          cache-to: type=gha,mode=max,scope=release-core
+
+  deploy:
+    name: deploy to the core server
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: core-production
+    # One deploy at a time per role; a queued deploy waits instead of being cancelled.
+    concurrency:
+      group: deploy-core
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out (deploy files and scripts at the tag)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Deploy core (backup, pull, up, healthcheck)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          DEPLOY_HOST: ${{ secrets.CORE_SSH_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.CORE_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.CORE_SSH_KNOWN_HOSTS }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/deploy-server.sh core "$VERSION"

@@ -1,0 +1,104 @@
+# Worker release: image with the latest yt-dlp to GHCR, then deploy to the worker server.
+# Rollback: run this workflow again on the previous tag.
+name: release-worker
+
+on:
+  push:
+    tags: ["worker-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and push the worker image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out (full history, the tag must be on master)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the tag and derive the version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: .github/scripts/release-version.sh worker "$TAG"
+
+      - name: Latest yt-dlp release
+        id: ytdlp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "version=$(.github/scripts/ytdlp-latest.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/tuskar2321/quoker-worker
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=sha,format=short,prefix=sha-
+          labels: |
+            org.opencontainers.image.description=Quoker worker (Go, yt-dlp ${{ steps.ytdlp.outputs.version }}, ffmpeg)
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/images/worker/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            YTDLP_VERSION=${{ steps.ytdlp.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release-worker
+          cache-to: type=gha,mode=max,scope=release-worker
+
+  deploy:
+    name: deploy to the worker server
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: worker-production
+    concurrency:
+      group: deploy-worker
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out (deploy files and scripts at the tag)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Deploy worker (pull, up, healthcheck)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          DEPLOY_HOST: ${{ secrets.WORKER_SSH_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.WORKER_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.WORKER_SSH_KNOWN_HOSTS }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/deploy-server.sh worker "$VERSION"

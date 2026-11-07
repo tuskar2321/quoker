@@ -1,0 +1,71 @@
+# Worker server, copied to /opt/app/compose.yml (docs/10-deploy.md).
+# Settings come from /opt/app/.env (see .env.example).
+#
+# The worker publishes no ports: it only makes outbound connections (TikTok, Instagram,
+# Telegram, and the core at w.<domain>:443 or, with TRANSPORT=reality, via xray).
+# xray (profile fallback) listens on 10443 inside the docker network only.
+name: quoker-worker
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  worker:
+    <<: *hardening
+    image: ghcr.io/tuskar2321/quoker-worker:${WORKER_TAG:?set WORKER_TAG in .env}
+    user: "10001:10001"
+    command: ["serve"]
+    mem_limit: 1g
+    pids_limit: 512
+    environment:
+      WORKER_ID: ${WORKER_ID:?set WORKER_ID in .env}
+      CORE_ADDR: ${CORE_ADDR:?set CORE_ADDR in .env, e.g. w.example.ru:443}
+      TRANSPORT: ${TRANSPORT:-direct}
+      # Used only with TRANSPORT=reality: the local xray tunnel. The TLS name stays CORE_ADDR's host.
+      CORE_DIAL_ADDR: ${CORE_DIAL_ADDR:-}
+      CLIENT_CERT: /certs/worker.crt
+      CLIENT_KEY: /certs/worker.key
+      CA_CERT: /certs/ca.crt
+      MAX_PARALLEL: ${MAX_PARALLEL:-2}
+      TMP_DIR: ${TMP_DIR:-/tmp/quoker}
+      TMP_CACHE_MAX_BYTES: ${TMP_CACHE_MAX_BYTES:-1073741824}
+      YTDLP_BIN: ${YTDLP_BIN:-/usr/local/bin/yt-dlp}
+      USER_AGENT: ${USER_AGENT:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HEALTH_ADDR: 127.0.0.1:8090
+      TZ: ${TZ:-UTC}
+      # The image has no writable home: yt-dlp and python use HOME=/tmp (writable tmpfs).
+      HOME: /tmp
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - ./certs:/certs:ro
+      # Scratch space and the file cache live on disk, not in RAM (the memory limit covers tmpfs).
+      - ./tmp:/tmp/quoker
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # REALITY client: a local TCP entry point (xray:10443) that tunnels to the core's xray on 8443.
+  # Start with: docker compose --profile fallback up -d
+  xray:
+    profiles: ["fallback"]
+    <<: *hardening
+    image: ghcr.io/tuskar2321/quoker-xray:${XRAY_TAG:?set XRAY_TAG in .env}
+    # The image default CMD has no "run" subcommand, and its default config path is not
+    # traversable by uid 10001: mount at /etc/xray and name the command explicitly.
+    command: ["run", "-confdir", "/etc/xray"]
+    user: "10001:10001"
+    mem_limit: 128m
+    tmpfs:
+      - /tmp:size=16m
+    volumes:
+      - ./xray:/etc/xray:ro
+    expose:
+      - "10443"

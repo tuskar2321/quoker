@@ -6,7 +6,14 @@
 *.pem
 deploy/secrets/
 deploy/*/certs/
-deploy/*/xray/config.json
+deploy/**/.env
+deploy/**/xray/config.json
+deploy/**/xray/.config.*
+deploy/**/*.crt
+deploy/**/*.csr
+deploy/**/*.pub
+# scratch space of the worker, rendered on the server
+deploy/*/tmp/
 # go
 /bin/
 /worker

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Pulls core database snapshots (macOS launchd user agent). Runs at login and once a day.
+  Install:
+    sed "s|__HOME__|$HOME|g" deploy/pc/launchd/com.quoker.backup-pull.plist > ~/Library/LaunchAgents/com.quoker.backup-pull.plist
+    install -m 0755 deploy/pc/backup-pull.sh ~/.local/bin/quoker-backup-pull
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.quoker.backup-pull.plist
+  Settings: ~/.config/quoker/backup-pull.env. Logs: ~/Library/Logs/quoker-backup-pull.log
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.quoker.backup-pull</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>__HOME__/.local/bin/quoker-backup-pull</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>86400</integer>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/quoker-backup-pull.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/quoker-backup-pull.log</string>
+</dict>
+</plist>

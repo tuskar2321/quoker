@@ -14,7 +14,7 @@
 
 ## Фейковый Telegram API
 
-`internal/testing/faketg`: HTTP-сервер, реализующий нужные методы Bot API (`getUpdates`, `sendMessage`, `sendVideo`, `getChatMember`, `getChat`, `setMyCommands`) с управляемым состоянием: участники чатов, права, ошибки 403/429. Воркер в тестах получает `bot_api_base` на него через `Config`.
+`internal/devtools/faketelegram` (бинарник `cmd/faketelegram`, используется и стендом `make dev`): HTTP-сервер, реализующий нужные методы Bot API (`getUpdates`, `sendMessage`, `sendVideo`, `getChatMember`, `getChat`, `setMyCommands`) с управляемым состоянием: участники чатов, права, ошибки 403/429. Воркер в тестах получает `bot_api_base` на него через `Config`.
 
 ## Критерии приёмки
 

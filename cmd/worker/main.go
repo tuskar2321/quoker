@@ -3,7 +3,8 @@
 //
 // Usage:
 //
-//	worker [serve]   connect to core and process tasks
+//	worker [serve]       connect to core and process tasks
+//	worker healthcheck   exit 0 if the local /healthz answers (HEALTH_ADDR)
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,8 +42,11 @@ func main() {
 }
 
 func run(args []string, getenv func(string) string) error {
-	if len(args) > 0 && args[0] != "serve" {
-		return fmt.Errorf("usage: worker [serve]")
+	if len(args) == 1 && args[0] == "healthcheck" {
+		return healthcheck(or(getenv("HEALTH_ADDR"), defaultHealthAddr))
+	}
+	if len(args) > 1 || (len(args) == 1 && args[0] != "serve") {
+		return fmt.Errorf("usage: worker [serve | healthcheck]")
 	}
 	cfg, err := loadWorkerConfig(getenv, version)
 	if err != nil {
@@ -77,7 +82,21 @@ func run(args []string, getenv func(string) string) error {
 	}
 	// Uploads to the core carry the client certificate; Telegram and the
 	// platforms are reached with the default transport.
-	var coreTransport http.RoundTripper = &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true}
+	coreDial, err := coreDialer(cfg)
+	if err != nil {
+		return err
+	}
+	coreHTTPTransport := &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true}
+	if coreDial != nil {
+		coreHTTPTransport.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+			return coreDial(ctx, addr)
+		}
+		if tlsCfg != nil {
+			// The upload URL host normally equals CORE_ADDR's; pin the TLS name anyway.
+			coreHTTPTransport.TLSClientConfig = withServerName(tlsCfg, cfg.CoreAddr)
+		}
+	}
+	var coreTransport http.RoundTripper = coreHTTPTransport
 	if tlsCfg == nil {
 		// Local dev without Caddy: identify ourselves the way the gRPC client
 		// does. In production Caddy overwrites the header from the certificate.
@@ -109,6 +128,7 @@ func run(args []string, getenv func(string) string) error {
 		MaxParallel:  int32(cfg.MaxParallel), //nolint:gosec // small positive value
 		CoreAddr:     cfg.CoreAddr,
 		TLSConfig:    tlsCfg,
+		DialContext:  coreDial,
 		Handler:      taskRunner,
 		Telegram:     tg,
 		// The poller exists before any ack can arrive: acks need a stream,
@@ -118,6 +138,12 @@ func run(args []string, getenv func(string) string) error {
 	proxy.client = client
 	poller = updates.New(tg, client, base.With("component", "updates"))
 	go poller.Run(ctx)
+
+	health, _, err := startHealth(ctx, cfg.HealthAddr, log)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = health.Close() }()
 
 	log.Info("starting worker", "id", cfg.WorkerID, "core", cfg.CoreAddr, "version", cfg.Version, "ytdlp", cfg.YtdlpVersion)
 	client.Run(ctx)

@@ -1,0 +1,32 @@
+{
+	email {$ACME_EMAIL}
+}
+
+api.{$DOMAIN} {
+	encode zstd gzip
+	# The public API never trusts client certificate headers. Only the w.* block sets them.
+	request_header -X-Client-Cert-Fingerprint
+	request_header -X-Client-Cert-CN
+	request_header -X-Client-Cert-DER
+	reverse_proxy core:8080
+}
+
+w.{$DOMAIN} {
+	tls {
+		client_auth {
+			mode require_and_verify
+			trust_pool file /etc/caddy/ca.crt
+		}
+	}
+	@grpc protocol grpc
+	reverse_proxy @grpc h2c://core:9090 {
+		header_up X-Client-Cert-Fingerprint {http.request.tls.client.fingerprint}
+		header_up X-Client-Cert-CN {http.request.tls.client.subject}
+		header_up X-Client-Cert-DER {http.request.tls.client.certificate_der_base64}
+	}
+	reverse_proxy /internal/* core:8081 {
+		header_up X-Client-Cert-Fingerprint {http.request.tls.client.fingerprint}
+		header_up X-Client-Cert-CN {http.request.tls.client.subject}
+		header_up X-Client-Cert-DER {http.request.tls.client.certificate_der_base64}
+	}
+}

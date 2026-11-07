@@ -27,6 +27,9 @@ type Config struct {
 	// https://w.<DOMAIN>/internal/v1 when only DOMAIN is set.
 	UploadBase string
 	LogLevel   string // LOG_LEVEL, default info
+	// BackupDir receives database backups: BACKUP_DIR. Empty disables the
+	// daily backup; `core backup` then needs it set.
+	BackupDir string
 	// TrustedProxies are the CIDRs allowed to send X-Client-Cert-* and
 	// X-Forwarded-For: TRUSTED_PROXIES, default loopback and private ranges.
 	TrustedProxies string
@@ -45,6 +48,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PublicURL:      strings.TrimRight(getenv("PUBLIC_URL"), "/"),
 		UploadBase:     getenv("UPLOAD_BASE"),
 		LogLevel:       or(getenv("LOG_LEVEL"), "info"),
+		BackupDir:      getenv("BACKUP_DIR"),
 		TrustedProxies: or(getenv("TRUSTED_PROXIES"), proxy.DefaultTrusted),
 	}
 	if d := getenv("DOMAIN"); d != "" {

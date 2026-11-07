@@ -1,0 +1,150 @@
+# Weekly rebuild of the worker with the newest yt-dlp, deployed on the current worker release
+# (docs/07-downloading.md, "Обновление yt-dlp"). The source is the worker-v* tag the server
+# is meant to run, so the Dockerfile and compose file are the release ones.
+#
+# Image tag: <worker version>-yt<yt-dlp version>, e.g. 1.2.0-yt2026.10.26. It is a new tag
+# on purpose: a worker-v* release tag is never overwritten, and the server can be rolled back
+# to the plain release tag. If the tag already exists, the build is skipped and the deploy
+# only re-applies it.
+name: ytdlp-refresh
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: resolve the worker release and the yt-dlp version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      worker_tag: ${{ steps.plan.outputs.worker_tag }}
+      version: ${{ steps.plan.outputs.version }}
+      ytdlp: ${{ steps.plan.outputs.ytdlp }}
+      image_tag: ${{ steps.plan.outputs.image_tag }}
+    steps:
+      - name: Check out (tags and master history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          worker_tag=$(git tag --list 'worker-v*' --sort=-v:refname | head -n 1)
+          if [[ -z $worker_tag ]]; then
+            echo "::error::no worker-v* release yet: release the worker first" >&2
+            exit 1
+          fi
+          # Validates the tag and checks it is on master. Its outputs are not needed here.
+          env -u GITHUB_OUTPUT .github/scripts/release-version.sh worker "$worker_tag" >/dev/null
+          version=${worker_tag#worker-v}
+          ytdlp=$(.github/scripts/ytdlp-latest.sh)
+          {
+            echo "worker_tag=$worker_tag"
+            echo "version=$version"
+            echo "ytdlp=$ytdlp"
+            echo "image_tag=$version-yt$ytdlp"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::worker $version with yt-dlp $ytdlp"
+
+  build:
+    name: build and push the worker image
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the worker release (its Dockerfile and compose)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.worker_tag }}
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip the build when this image already exists
+        id: exists
+        env:
+          IMAGE: ghcr.io/tuskar2321/quoker-worker:${{ needs.plan.outputs.image_tag }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE already exists, not rebuilding"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Image tags and labels
+        id: meta
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/tuskar2321/quoker-worker
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ needs.plan.outputs.image_tag }}
+
+      - name: Build and push
+        id: build
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/images/worker/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ needs.plan.outputs.version }}
+            YTDLP_VERSION=${{ needs.plan.outputs.ytdlp }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=ytdlp-refresh
+          cache-to: type=gha,mode=max,scope=ytdlp-refresh
+
+  deploy:
+    name: deploy the worker
+    needs: [plan, build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: worker-production
+    concurrency:
+      group: deploy-worker
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out the worker release (deploy files and scripts)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.worker_tag }}
+          persist-credentials: false
+
+      - name: Deploy the worker image
+        env:
+          IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+          DEPLOY_HOST: ${{ secrets.WORKER_SSH_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.WORKER_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.WORKER_SSH_KNOWN_HOSTS }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/deploy-server.sh worker "$IMAGE_TAG"

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 )
 
@@ -34,9 +35,23 @@ type workerConfig struct {
 	Version string
 	// YtdlpVersion is set after querying yt-dlp --version on startup.
 	YtdlpVersion string
+	// Transport is how the core is reached: "direct" or "reality" (through the
+	// local xray tunnel). TRANSPORT, default direct. Only core traffic uses it.
+	Transport string
+	// CoreDialAddr is the TCP target for core traffic when Transport is
+	// reality (CORE_DIAL_ADDR, e.g. xray:10443). TLS name stays CoreAddr's host.
+	CoreDialAddr string
+	// HealthAddr serves GET /healthz. HEALTH_ADDR, default 127.0.0.1:8090.
+	HealthAddr string
 	// LogLevel controls logging verbosity. LOG_LEVEL, default info.
 	LogLevel string
 }
+
+const (
+	transportDirect   = "direct"
+	transportReality  = "reality"
+	defaultHealthAddr = "127.0.0.1:8090"
+)
 
 // defaultUserAgent is a current mobile Chrome; platforms serve mobile-friendly
 // formats to it.
@@ -55,6 +70,9 @@ func loadWorkerConfig(getenv func(string) string, version string) (workerConfig,
 		UserAgent:        or(getenv("USER_AGENT"), defaultUserAgent),
 		Version:          version,
 		LogLevel:         or(getenv("LOG_LEVEL"), "info"),
+		Transport:        or(getenv("TRANSPORT"), transportDirect),
+		CoreDialAddr:     getenv("CORE_DIAL_ADDR"),
+		HealthAddr:       or(getenv("HEALTH_ADDR"), defaultHealthAddr),
 		MaxParallel:      2,
 	}
 	if s := getenv("TMP_CACHE_MAX_BYTES"); s != "" {
@@ -78,6 +96,23 @@ func loadWorkerConfig(getenv func(string) string, version string) (workerConfig,
 	}
 	if c.CoreAddr == "" {
 		errs = append(errs, errors.New("CORE_ADDR is required"))
+	}
+	switch c.Transport {
+	case transportDirect:
+	case transportReality:
+		if c.CoreDialAddr == "" {
+			errs = append(errs, errors.New("CORE_DIAL_ADDR is required when TRANSPORT=reality"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("TRANSPORT %q: must be direct or reality", c.Transport))
+	}
+	if c.CoreDialAddr != "" {
+		if _, _, err := net.SplitHostPort(c.CoreDialAddr); err != nil {
+			errs = append(errs, fmt.Errorf("CORE_DIAL_ADDR %q: %w", c.CoreDialAddr, err))
+		}
+	}
+	if _, _, err := net.SplitHostPort(c.HealthAddr); err != nil {
+		errs = append(errs, fmt.Errorf("HEALTH_ADDR %q: %w", c.HealthAddr, err))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return workerConfig{}, fmt.Errorf("config: %w", err)

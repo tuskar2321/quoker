@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"sync"
 	"time"
 
@@ -73,6 +74,10 @@ type Config struct {
 	CoreAddr string
 	// TLSConfig is the mTLS config (client cert + CA for the core).
 	TLSConfig *tls.Config
+	// DialContext, when set, opens the TCP connection to the core instead of
+	// dialing CoreAddr; TLS server name and gRPC authority still come from
+	// CoreAddr (used by the REALITY transport). addr is the address gRPC resolved.
+	DialContext func(ctx context.Context, addr string) (net.Conn, error)
 	// Handler processes incoming tasks.
 	Handler TaskHandler
 	// OnBotUpdateAck, when set, receives update ids the core has processed.
@@ -281,7 +286,13 @@ func (c *Client) connect(ctx context.Context) (healthy bool, err error) {
 		// Development mode: no TLS. The server must accept h2c or plaintext.
 		dialOpts = append(dialOpts, grpc.WithInsecure()) //nolint:staticcheck // dev only
 	}
-	cc, err := grpc.NewClient(c.cfg.CoreAddr, dialOpts...)
+	target := c.cfg.CoreAddr
+	if d := c.cfg.DialContext; d != nil {
+		// passthrough: no local DNS lookup, the custom dialer owns the address.
+		target = "passthrough:///" + target
+		dialOpts = append(dialOpts, grpc.WithContextDialer(d))
+	}
+	cc, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
 		return false, fmt.Errorf("dial: %w", err)
 	}

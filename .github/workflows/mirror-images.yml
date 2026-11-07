@@ -1,0 +1,55 @@
+# Mirrors the pinned caddy and xray images to GHCR (docs/10-deploy.md). The servers pull only
+# from ghcr.io, because Docker Hub is unreliable from Russia. Versions live in
+# .github/mirror-versions.env; change them by a commit to master, then run this workflow.
+name: mirror-images
+
+on:
+  schedule:
+    - cron: "30 4 1 * *" # 1st day of the month, 04:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: copy caddy and xray to GHCR
+    # Only master: a branch must not push images under the owner's name.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy the manifests (all platforms, no pull to the runner)
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . .github/mirror-versions.env
+          mirror() {
+            docker buildx imagetools create --tag "$1" "$2"
+            docker buildx imagetools inspect "$1" >/dev/null
+            echo "mirrored $2 -> $1"
+          }
+          mirror "ghcr.io/tuskar2321/quoker-caddy:$CADDY_VERSION" "docker.io/library/caddy:$CADDY_VERSION"
+          mirror "ghcr.io/tuskar2321/quoker-xray:$XRAY_VERSION" "ghcr.io/xtls/xray-core:$XRAY_VERSION"
