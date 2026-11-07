@@ -10,10 +10,14 @@ import app.quoker.core.data.model.Role
 import app.quoker.core.data.model.TelegramLinkState
 import app.quoker.core.data.model.UserStatus
 import app.quoker.core.data.model.WorkerStatus
+import app.quoker.core.network.ErrorCodes
+import app.quoker.core.network.QuokerException
 import java.io.File
 import java.nio.file.Files
 import java.time.Duration
 import java.time.Instant
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -49,6 +53,17 @@ class AuthAdminVersionRepositoryTest {
             """{"invite_code":"K7Q2-ZX9P","device_id":"${FakeSessionStore.DEVICE_ID}","device_name":"Pixel 9"}""",
             t.server.takeRequest().body.readUtf8(),
         )
+    }
+
+    @Test
+    fun registerGivesUpWhenCoreIsSilent() = runTest {
+        val session = FakeSessionStore(token = null)
+        val auth = AuthRepositoryImpl(t.api, session, 300.milliseconds, Dispatchers.IO)
+        t.server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val error = runCatching { auth.register("K7Q2-ZX9P", "Pixel") }.exceptionOrNull()
+        assertEquals(ErrorCodes.NETWORK, (error as QuokerException).error.code)
+        assertTrue(error.error.retryable)
+        assertNull(session.sessionToken())
     }
 
     @Test

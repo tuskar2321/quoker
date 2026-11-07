@@ -1,18 +1,24 @@
 package app.quoker.core.data.repository
 
+import app.quoker.core.common.QuokerError
 import app.quoker.core.data.model.Me
 import app.quoker.core.data.model.TelegramLink
 import app.quoker.core.data.model.TelegramLinkStatus
 import app.quoker.core.data.model.toDomain
 import app.quoker.core.data.session.SessionStore
+import app.quoker.core.network.ErrorCodes
 import app.quoker.core.network.QuokerApi
 import app.quoker.core.network.QuokerException
 import app.quoker.core.network.model.RegisterRequestDto
 import app.quoker.core.network.quokerCall
 import javax.inject.Inject
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 interface AuthRepository {
     val signedIn: Flow<Boolean>
@@ -39,16 +45,28 @@ interface AuthRepository {
     }
 }
 
-internal class AuthRepositoryImpl @Inject constructor(
+internal class AuthRepositoryImpl(
     private val api: QuokerApi,
     private val session: SessionStore,
+    private val registerTimeout: Duration,
+    private val timeoutContext: CoroutineContext,
 ) : AuthRepository {
+    // The timeout runs on a real clock (Dispatchers.IO), not on a test scheduler's virtual time.
+    @Inject
+    constructor(api: QuokerApi, session: SessionStore) : this(api, session, REGISTER_TIMEOUT, Dispatchers.IO)
+
     override val signedIn: Flow<Boolean> = session.signedIn
 
     override suspend fun register(inviteCode: String, deviceName: String): Me {
-        val res = quokerCall {
-            api.register(RegisterRequestDto(inviteCode.trim().uppercase(), session.deviceId(), deviceName.trim()))
-        }
+        // One limit for the whole sign-in call (docs/08): OkHttp's per-phase timeouts and route
+        // retries could otherwise keep «Продолжить» spinning far longer when the core is unreachable.
+        val res = withContext(timeoutContext) {
+            withTimeoutOrNull(registerTimeout) {
+                quokerCall {
+                    api.register(RegisterRequestDto(inviteCode.trim().uppercase(), session.deviceId(), deviceName.trim()))
+                }
+            }
+        } ?: throw QuokerException(QuokerError(ErrorCodes.NETWORK, "sign-in timed out", retryable = true))
         session.saveToken(res.sessionToken)
         return res.user.toDomain()
     }
@@ -74,3 +92,7 @@ internal class AuthRepositoryImpl @Inject constructor(
 
     override suspend fun unlinkTelegram() = quokerCall { api.unlinkTelegram() }
 }
+
+/** Sign-in by invite code gives up after this long (docs/08 «Сеть»). */
+internal val REGISTER_TIMEOUT: Duration = 10.seconds
+

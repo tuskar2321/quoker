@@ -89,8 +89,9 @@ fun InviteContent(
             )
             Text(stringResource(R.string.invite_text), style = t.bodyParagraph, color = c.onSurfaceStrong)
             // The field owns its text: binding it to the asynchronously collected UiState and
-            // rewriting it in onValueChange dropped characters typed faster than a frame.
-            val code = rememberTextFieldState(state.code)
+            // rewriting it in onValueChange dropped characters typed faster than a frame. The
+            // ViewModel gets the text with the dash and normalizes it.
+            val code = rememberTextFieldState(InviteCodeInputTransformation.format(state.code))
             LaunchedEffect(code) {
                 snapshotFlow { code.text.toString() }.collect(onCodeChange)
             }
@@ -103,7 +104,6 @@ fun InviteContent(
                 enabled = !state.submitting,
                 textStyle = t.titleMedium.copy(fontWeight = FontWeight.W700, letterSpacing = 3.sp),
                 inputTransformation = InviteCodeInputTransformation,
-                outputTransformation = InviteCodeOutputTransformation,
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Characters,
                     autoCorrectEnabled = false,

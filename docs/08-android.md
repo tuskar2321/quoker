@@ -30,7 +30,7 @@ android/
 ## Сессия и сеть
 
 - `session_token` — в DataStore, зашифрованный AEAD-ключом Tink, ключ в Android Keystore.
-- OkHttp: таймауты 10/30/30 с; интерсептор добавляет `Authorization`, `X-Quoker-Version-Code`, `X-Device-Id`.
+- OkHttp: таймауты 10/30/30 с; вход по коду приглашения ограничен 10 с на весь запрос, после чего показывается ошибка сети; интерсептор добавляет `Authorization`, `X-Quoker-Version-Code`, `X-Device-Id`.
 - `401` → сброс сессии и переход на онбординг; `426` → экран «Обновите приложение»; `403 user_blocked` → экран «Доступ закрыт».
 - Ошибки API → `QuokerError(code, message, retryable)`; тексты для UI — из `strings.xml` по `code`, `message` сервера — запасной вариант.
 
