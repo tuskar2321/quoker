@@ -44,7 +44,7 @@ worker) key=WORKER_TAG ;;
 esac
 
 logged_in=0
-# shellcheck disable=SC2329 # invoked by the EXIT trap below
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap below (SC2317 on shellcheck < 0.10)
 cleanup() {
 	if [[ $logged_in == 1 ]]; then
 		rssh "docker logout ghcr.io >/dev/null 2>&1; exit 0" || true
