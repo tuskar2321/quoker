@@ -162,7 +162,7 @@ func readyBefore(ctx context.Context, tx *sql.Tx, cutoff time.Time) ([]string, e
 func (s *Store) HasReady(ctx context.Context) (bool, error) {
 	var one int
 	err := s.db().QueryRowContext(ctx,
-		`SELECT 1 FROM tasks WHERE status = 'queued' AND not_before <= ? LIMIT 1`, s.now().UnixMilli()).Scan(&one)
+		`SELECT 1 FROM tasks WHERE `+readyWhere+` LIMIT 1`, s.now().UnixMilli(), MaxActiveDownloadsPerUser).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

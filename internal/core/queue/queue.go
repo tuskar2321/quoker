@@ -34,6 +34,18 @@ const (
 	PriorityDownload  = 0
 )
 
+// MaxActiveDownloadsPerUser caps how many download tasks of one user the
+// workers run at once (docs/04-core-worker-protocol.md). The rest wait in the
+// queue and other users' downloads go ahead of them.
+const MaxActiveDownloadsPerUser = 2
+
+// readyWhere selects tasks that may be leased now. It takes two arguments:
+// the current time in Unix milliseconds and MaxActiveDownloadsPerUser.
+const readyWhere = `status = 'queued' AND not_before <= ?
+	AND NOT (kind = 'download' AND user_id IS NOT NULL AND
+	         (SELECT COUNT(*) FROM tasks AS l
+	          WHERE l.status = 'leased' AND l.kind = 'download' AND l.user_id = tasks.user_id) >= ?)`
+
 // defaultPriority maps kinds to their priorities.
 func defaultPriority(k Kind) int {
 	switch k {
@@ -211,9 +223,9 @@ func (s *Store) Lease(ctx context.Context, workerID string) (*Task, error) {
 			        worker_id, lease_until, progress, result, error_code, error_message,
 			        dedup_key, user_id, not_before, created_at, updated_at
 			 FROM tasks
-			 WHERE status = 'queued' AND not_before <= ?
+			 WHERE `+readyWhere+`
 			 ORDER BY priority DESC, not_before, created_at
-			 LIMIT 1`, now.UnixMilli()).Scan(
+			 LIMIT 1`, now.UnixMilli(), MaxActiveDownloadsPerUser).Scan(
 			&row.ID, &kind, &row.Payload, &status, &row.Priority,
 			&row.Attempts, &row.MaxAttempts, &workerIDNull, &leaseUntilNull,
 			&progressNull, &resultNull, &errorCodeNull, &errorMsgNull,
