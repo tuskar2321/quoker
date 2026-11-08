@@ -53,7 +53,7 @@ deploy/
 | Образ | Основа | Примечание |
 | --- | --- | --- |
 | `ghcr.io/tuskar2321/quoker-core:<CORE_TAG>` | distroless, uid 10001 | только бинарник `/usr/local/bin/core`, нет shell и curl |
-| `ghcr.io/tuskar2321/quoker-worker:<WORKER_TAG>` | debian-slim, uid 10001 | Go-бинарник, ffmpeg, python3, yt-dlp (`YTDLP_VERSION`) |
+| `ghcr.io/tuskar2321/quoker-worker:<WORKER_TAG>` | debian-slim, uid 10001 | Go-бинарник, ffmpeg, yt-dlp (`YTDLP_VERSION`, официальная сборка `yt-dlp_linux.zip` со встроенным Python и `curl_cffi`) |
 | `ghcr.io/tuskar2321/quoker-caddy:<CADDY_TAG>` | зеркало официального `caddy` | `mirror-images`, раз в месяц |
 | `ghcr.io/tuskar2321/quoker-xray:<XRAY_TAG>` | зеркало `ghcr.io/xtls/xray-core` | `mirror-images` |
 
@@ -184,7 +184,7 @@ w.{$DOMAIN} {
 - Лимиты: `MAX_PARALLEL=2`, `TMP_CACHE_MAX_BYTES=1073741824`.
 - Пути в контейнере: `TMP_DIR=/tmp/quoker` (на диске, в `./tmp`), `YTDLP_BIN=/usr/local/bin/yt-dlp`, `HEALTH_ADDR=127.0.0.1:8090`, `CLIENT_CERT`, `CLIENT_KEY`, `CA_CERT` фиксированы в compose (`/certs/...`).
 - Прочее: `USER_AGENT` (пусто — встроенный мобильный UA), `LOG_LEVEL=info`, `TZ=UTC`.
-- Домашний каталог: `HOME=/tmp`, потому что файловая система только для чтения; yt-dlp и python пишут кэш в `/tmp` (tmpfs 64 МБ).
+- Домашний каталог: `HOME=/tmp`, потому что файловая система только для чтения; yt-dlp пишет кэш в `/tmp` (tmpfs 64 МБ).
 
 ## Сертификаты
 

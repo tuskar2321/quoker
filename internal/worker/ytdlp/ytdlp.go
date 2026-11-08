@@ -56,7 +56,7 @@ func (r *Runner) Version(ctx context.Context) (string, error) {
 func (r *Runner) Metadata(ctx context.Context, rawURL, cookies string) (*Info, error) {
 	var info *Info
 	used, err := r.withCookies(rawURL, cookies, func(extra []string) error {
-		out, _, err := r.run(ctx, resolveTimeout, "", append(append(r.common(), extra...), "-J", "--", rawURL))
+		out, _, err := r.run(ctx, resolveTimeout, "", append(append(r.common(rawURL), extra...), "-J", "--", rawURL))
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func (r *Runner) Metadata(ctx context.Context, rawURL, cookies string) (*Info, e
 func (r *Runner) Download(ctx context.Context, rawURL, selector, dir, cookies string, maxBytes int64) (string, error) {
 	var path string
 	_, err := r.withCookies(rawURL, cookies, func(extra []string) error {
-		args := append(r.common(), extra...)
+		args := append(r.common(rawURL), extra...)
 		args = append(args,
 			"-f", selector,
 			"--merge-output-format", "mp4",
@@ -104,12 +104,16 @@ func (r *Runner) Download(ctx context.Context, rawURL, selector, dir, cookies st
 	return path, err
 }
 
-func (r *Runner) common() []string {
+// common returns the flags shared by every call for rawURL. TikTok gets no
+// --user-agent: yt-dlp impersonates a browser there (curl_cffi), and a user
+// agent that does not match the impersonated TLS fingerprint makes TikTok
+// refuse the request.
+func (r *Runner) common(rawURL string) []string {
 	args := []string{
 		"--ignore-config", "--no-playlist", "--no-warnings", "--no-progress",
 		"--socket-timeout", "20", "--retries", "2", "--no-cache-dir",
 	}
-	if r.userAgent != "" {
+	if r.userAgent != "" && !isTikTok(rawURL) {
 		args = append(args, "--user-agent", r.userAgent)
 	}
 	return args
@@ -234,13 +238,18 @@ func lastLine(s string) string {
 	return s
 }
 
-func isInstagram(rawURL string) bool {
+func isInstagram(rawURL string) bool { return hostIs(rawURL, "instagram.com") }
+
+func isTikTok(rawURL string) bool { return hostIs(rawURL, "tiktok.com") }
+
+// hostIs reports whether rawURL's host is domain or one of its subdomains.
+func hostIs(rawURL, domain string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return false
 	}
 	h := strings.ToLower(u.Hostname())
-	return h == "instagram.com" || strings.HasSuffix(h, ".instagram.com")
+	return h == domain || strings.HasSuffix(h, "."+domain)
 }
 
 // limitedBuffer keeps the first max bytes and silently drops the rest, so a

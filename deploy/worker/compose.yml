@@ -37,7 +37,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       HEALTH_ADDR: 127.0.0.1:8090
       TZ: ${TZ:-UTC}
-      # The image has no writable home: yt-dlp and python use HOME=/tmp (writable tmpfs).
+      # The image has no writable home: yt-dlp uses HOME=/tmp (writable tmpfs).
       HOME: /tmp
     tmpfs:
       - /tmp:size=64m

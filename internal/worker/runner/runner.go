@@ -92,7 +92,7 @@ func (r *Runner) Handle(ctx context.Context, task *linkv1.Task, conn workerlink.
 	result, taskErr := r.dispatch(ctx, task, cfg, prog, log)
 
 	if taskErr != nil {
-		log.Info("task failed", "code", taskErr.Code, "retryable", taskErr.Retryable)
+		log.Info("task failed", "code", taskErr.Code, "retryable", taskErr.Retryable, "message", taskErr.Message)
 		return conn.SendResult(&linkv1.TaskResult{
 			TaskId: task.TaskId,
 			Result: &linkv1.TaskResult_Error{Error: taskErr},
