@@ -1,6 +1,9 @@
 package app.quoker
 
 import android.widget.Toast
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,6 +52,9 @@ import app.quoker.report.CrashLog
 import app.quoker.ui.BlockedScreen
 import kotlinx.coroutines.launch
 
+/** Matches the NavHost default enter/exit fade, so a back gesture looks like a regular pop. */
+private const val NAV_FADE_MS = 700
+
 private sealed interface UpdateCheckMessage {
     data object UpToDate : UpdateCheckMessage
 
@@ -80,6 +86,10 @@ internal fun MainScreen(viewModel: MainViewModel, updateManager: UpdateManager, 
             navController = navController,
             startDestination = remember { startDestination(startSignedIn) },
             modifier = if (overlay) Modifier.fillMaxSize().clearAndSetSemantics {} else Modifier.fillMaxSize(),
+            // The back gesture uses the same cross-fade as a regular pop instead of the
+            // library default, which shrinks the leaving screen while the gesture is in progress.
+            predictivePopEnterTransition = { _ -> fadeIn(tween(NAV_FADE_MS)) },
+            predictivePopExitTransition = { _ -> fadeOut(tween(NAV_FADE_MS)) },
         ) {
             onboardingGraph(
                 onSignedIn = { linked ->
