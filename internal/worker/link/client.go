@@ -28,10 +28,10 @@ const (
 	// connection is dead even if writes still succeed (docs/04).
 	silenceTimeout = 45 * time.Second
 	silenceCheck   = 5 * time.Second
-	// backoffMin is the minimum reconnect delay.
-	backoffMin = time.Second
-	// backoffMax is the maximum reconnect delay.
-	backoffMax = 60 * time.Second
+	// minBackoff is the minimum reconnect delay.
+	minBackoff = time.Second
+	// maxBackoff is the maximum reconnect delay.
+	maxBackoff = 60 * time.Second
 	// jitter is the fraction of the delay to randomize (±20%).
 	jitter = 0.2
 	// maxOutbox bounds results waiting for a reconnect.
@@ -609,9 +609,9 @@ func backoffDelay(attempts int) time.Duration {
 	if shift > 6 {
 		shift = 6
 	}
-	base := backoffMin * (1 << shift)
-	if base > backoffMax {
-		base = backoffMax
+	base := minBackoff * (1 << shift)
+	if base > maxBackoff {
+		base = maxBackoff
 	}
 	j := float64(base) * jitter * (rand.Float64()*2 - 1) //nolint:gosec // G404: jitter, not crypto
 	return base + time.Duration(j)

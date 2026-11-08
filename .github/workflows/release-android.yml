@@ -77,6 +77,9 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
         run: |
           : "${API_BASE_URL:?set the ANDROID_API_BASE_URL repository variable, e.g. https://api.<domain>}"
+          : "${QUOKER_SIGNING_STORE_PASSWORD:?set the ANDROID_KEYSTORE_PASSWORD repository secret}"
+          : "${QUOKER_SIGNING_KEY_ALIAS:?set the ANDROID_KEY_ALIAS repository secret}"
+          : "${QUOKER_SIGNING_KEY_PASSWORD:?set the ANDROID_KEY_PASSWORD repository secret}"
           ./gradlew --no-daemon :app:assembleRelease \
             -Pquoker.versionCode="$VERSION_CODE" \
             -Pquoker.versionName="$VERSION_NAME" \
